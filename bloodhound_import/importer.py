@@ -317,9 +317,9 @@ def parse_file(filename, driver):
         # Create a new session per chunk.
         with driver.session() as session:
             for entry in chunk:
+                count += 1
                 session.write_transaction(parsing_map[obj_type], entry)
-        count += 1
-        logging.info("%s/%s", count*1000, total)
 
-    logging.info("%s/%s", total, total)
+        logging.info("%s/%s", count, total)
+
     logging.warning("Completed file: %s", filename)
