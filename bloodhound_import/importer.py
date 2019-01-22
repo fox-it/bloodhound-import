@@ -313,12 +313,19 @@ def parse_file(filename, driver):
     data_chunks = chunks(data[obj_type], 1000)
     count = 0
 
+    parse_function = None
+    try:
+        parse_function = parsing_map[obj_type]
+    except KeyError:
+        logging.error("Parsing function for object type: %s was not found.", obj_type)
+        return
+
     for chunk in data_chunks:
         # Create a new session per chunk.
         with driver.session() as session:
             for entry in chunk:
                 count += 1
-                session.write_transaction(parsing_map[obj_type], entry)
+                session.write_transaction(parse_function, entry)
 
         logging.info("%s/%s", count, total)
 
