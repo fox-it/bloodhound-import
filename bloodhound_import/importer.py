@@ -128,6 +128,44 @@ def parse_ou(tx, ou):
         for user in ou['Users']:
             tx.run(user_query, props={'ou': guid, 'user': user})
 
+def create_gpo_queries(tx, base_query, computers, objects, rel):
+    """Creates the gpo queries.
+    Arguments:
+        tx {neo4j.Session} -- Neo4j session
+        base_query {str} -- Query to base queries on.
+        computers {list} -- Affected computers
+        objects {list} -- Objects to apply the gpos
+        rel {str} -- Name
+    """
+    for obj in objects:
+        member = obj['Name']
+        admin_type = obj['Type']
+        query = base_query.format(admin_type, rel)
+        for computer in computers:
+            tx.run(query, props={"comp": computer, "member": member})
+
+def parse_gpo_admin(tx, gpo_admin):
+    """Parses a GPO admin
+
+    Arguments:
+        tx {neo4j.Session} -- Neo4j session
+        gpo_admin {dict} -- Single gpo admin object
+    """
+    base_query = "UNWIND {{props}} AS prop MERGE (n:{} {{name:prop.member}}) MERGE (m:Computer {{name:prop.comp}}) MERGE (n)-[r:{} {{isacl:false}}]->(m)"
+
+    computers = []
+    if 'AffectedComputers' in gpo_admin and gpo_admin['AffectedComputers'] is not None:
+        computers = gpo_admin['AffectedComputers']
+
+    if 'LocalAdmins' in gpo_admin and gpo_admin['LocalAdmins'] is not None:
+        create_gpo_queries(tx, base_query, computers, gpo_admin['LocalAdmins'], "AdminTo")
+
+    if 'RemoteDesktopUsers' in gpo_admin and gpo_admin['RemoteDesktopUsers'] is not None:
+        create_gpo_queries(tx, base_query, computers, gpo_admin['RemoteDesktopUsers'], "CanRDP")
+
+    if 'DcomUsers' in gpo_admin and gpo_admin['DcomUsers'] is not None:
+        create_gpo_queries(tx, base_query, computers, gpo_admin['DcomUsers'], "ExecuteDCOM")
+
 
 def parse_gpo(tx, gpo):
     """Parses a single GPO.
@@ -343,7 +381,7 @@ def parse_file(filename, driver):
     obj_type = data['meta']['type']
     total = data['meta']['count']
 
-    parsing_map = {'computers': parse_computer, 'users': parse_user, 'groups': parse_group, 'domains': parse_domain, 'sessions': parse_session, 'gpos': parse_gpo, 'ous': parse_ou}
+    parsing_map = {'computers': parse_computer, 'users': parse_user, 'groups': parse_group, 'domains': parse_domain, 'sessions': parse_session, 'gpos': parse_gpo, 'ous': parse_ou, 'gpoadmins': parse_gpo_admin}
 
     # Split the data into chunks, fixing some bugs with memory usage.
     data_chunks = chunks(data[obj_type], 1000)
