@@ -301,7 +301,7 @@ def parse_file(filename, driver):
     """
     logging.warning("Parsing bloodhound file: %s", filename)
 
-    with codecs.open(filename, 'r', encoding='utf-8') as f:
+    with codecs.open(filename, 'r', encoding='utf-8-sig') as f:
         data = json.load(f)
 
     obj_type = data['meta']['type']
