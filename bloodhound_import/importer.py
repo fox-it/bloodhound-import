@@ -93,6 +93,42 @@ def create_computer_query(tx, computer, query, value, rel):
         props = {'name': computer['Name'], 'target': aName}
         tx.run(statement, props=props)
 
+
+def parse_ou(tx, ou):
+    """Parses a single ou.
+
+    Arguments:
+        tx {neo4j.Session} -- Neo4j session
+        gpo {dict} -- Single gpo object.
+    """
+    guid = ou['Guid']
+    properties = ou['Properties']
+    property_query = "UNWIND {props} AS prop MERGE (n:OU {guid:prop.guid}) SET n += prop.map"
+    tx.run(property_query, props={'guid': guid, 'map': properties})
+
+    if 'Links' in ou and ou['Links'] is not None:
+        link_query = "UNWIND {props} as prop MERGE (n:OU {guid:prop.guid}) MERGE (m:GPO {name:prop.gpo}) MERGE (m)-[r:GpLink {enforced:prop.enforced, isacl:false}]->(n)"
+        for link in ou['Links']:
+            enforced = link['IsEnforced']
+            target = link['Name']
+            tx.run(link_query, props={'guid': guid, 'gpo': target, 'enforced': enforced})
+
+    if 'ChildOus' in ou and ou['ChildOus'] is not None:
+        childou_query = "UNWIND {props} AS prop MERGE (n:OU {guid:prop.parent}) MERGE (m:OU {guid:prop.child}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
+        for cou in ou['ChildOus']:
+            tx.run(childou_query, props={'parent': guid, 'child': cou})
+
+    if 'Computers' in ou and ou['Computers'] is not None:
+        computer_query = "UNWIND {props} AS prop MERGE (n:OU {guid:prop.ou}) MERGE (m:Computer {name:prop.comp}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
+        for computer in ou['Computers']:
+            tx.run(computer_query, props={'ou': guid, 'comp': computer})
+
+    if 'Users' in ou and ou['Users'] is not None:
+        user_query = "UNWIND {props} AS prop MERGE (n:OU {guid:prop.ou}) MERGE (m:User {name:prop.user}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
+        for user in ou['Users']:
+            tx.run(user_query, props={'ou': guid, 'user': user})
+
+
 def parse_gpo(tx, gpo):
     """Parses a single GPO.
 
@@ -307,7 +343,7 @@ def parse_file(filename, driver):
     obj_type = data['meta']['type']
     total = data['meta']['count']
 
-    parsing_map = {'computers': parse_computer, 'users': parse_user, 'groups': parse_group, 'domains': parse_domain, 'sessions': parse_session, 'gpos': parse_gpo}
+    parsing_map = {'computers': parse_computer, 'users': parse_user, 'groups': parse_group, 'domains': parse_domain, 'sessions': parse_session, 'gpos': parse_gpo, 'ous': parse_ou}
 
     # Split the data into chunks, fixing some bugs with memory usage.
     data_chunks = chunks(data[obj_type], 1000)
