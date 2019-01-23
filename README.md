@@ -17,3 +17,5 @@ usage: bloodhound-import.py [-h] [-du DATABASE_USER] [-dp DATABASE_PASSWORD]
 
 Example:
 `bloodhound-import -du neo4j -dp neo4j ~/Desktop/SessionLoop_20190115133114*.json`
+
+If the -du and -dp options are not specified, the tool will try to auto detect these values from the bloodhound config file.

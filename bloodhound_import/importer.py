@@ -373,7 +373,7 @@ def parse_file(filename, driver):
         filename {str} -- filename to parse.
         driver {neo4j.GraphDatabase} -- driver to connect to neo4j.
     """
-    logging.warning("Parsing bloodhound file: %s", filename)
+    logging.info("Parsing bloodhound file: %s", filename)
 
     with codecs.open(filename, 'r', encoding='utf-8-sig') as f:
         data = json.load(f)
@@ -401,6 +401,6 @@ def parse_file(filename, driver):
                 count += 1
                 session.write_transaction(parse_function, entry)
 
-        logging.info("%s/%s", count, total)
+        logging.debug("%s/%s", count, total)
 
-    logging.warning("Completed file: %s", filename)
+    logging.info("Completed file: %s", filename)

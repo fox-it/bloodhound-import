@@ -9,8 +9,8 @@ def main():
     """
     argparser = argparse.ArgumentParser("bloodhound-import.py")
     argparser.add_argument("files", help="Files to parse.", nargs="+")
-    argparser.add_argument("-du", "--database-user", help="Username to connect to neo4j.")
-    argparser.add_argument("-dp", "--database-password", help="Password to connect to neo4j.")
+    argparser.add_argument("-du", "--database-user", help="Username to connect to neo4j, if not specified will try to auto detect a config file.")
+    argparser.add_argument("-dp", "--database-password", help="Password to connect to neo4j, if not specified will try to auto detect a config file.")
     argparser.add_argument("--database", help="The host neo4j is running on.", default="localhost")
     argparser.add_argument("-p", "--port", help="Port of neo4j", default=7687)
     argparser.add_argument("-v", "--verbose", help="Verbose output", action='store_true')
@@ -24,22 +24,22 @@ def main():
 
     logging.basicConfig(format="[%(levelname)s] %(asctime)s - %(message)s")
     if arguments.verbose:
-        logging.getLogger().setLevel(logging.INFO)
+        logging.getLogger().setLevel(logging.DEBUG)
     else:
-        logging.getLogger().setLevel(logging.WARNING)
+        logging.getLogger().setLevel(logging.INFO)
 
     driver = database.init_driver(arguments.database, arguments.port, arguments.database_user, arguments.database_password)
 
     try:
         with driver.session() as session:
-            logging.info("Adding constraints to the neo4j database")
+            logging.debug("Adding constraints to the neo4j database")
             session.write_transaction(add_constraints)
 
-        logging.warning("Parsing %s files", len(arguments.files))
+        logging.info("Parsing %s files", len(arguments.files))
         for filename in arguments.files:
             parse_file(filename, driver)
 
-        logging.warning("Done")
+        logging.info("Done")
     finally:
         driver.close()
 
