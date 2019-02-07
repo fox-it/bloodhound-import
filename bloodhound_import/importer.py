@@ -86,7 +86,7 @@ def create_computer_query(tx, computer, query, value, rel):
         rel {[type]} -- Value to set: AdminTo, ExecuteDCOM or CanRDP
     """
 
-    for entry in computer[value]:
+    for entry in computer.get(value, []):
         aType = entry['Type']
         aName = entry['Name']
         statement = query.format(aType, rel)
