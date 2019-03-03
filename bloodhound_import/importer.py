@@ -86,7 +86,7 @@ def create_computer_query(tx, computer, query, value, rel):
         rel {[type]} -- Value to set: AdminTo, ExecuteDCOM or CanRDP
     """
 
-    for entry in computer[value]:
+    for entry in computer.get(value, []) or []:
         aType = entry['Type']
         aName = entry['Name']
         statement = query.format(aType, rel)
@@ -181,7 +181,8 @@ def parse_gpo(tx, gpo):
     query = "UNWIND {props} AS prop MERGE (n:GPO {name:prop.name}) SET n.guid=prop.guid, n+=prop.map"
     tx.run(query, props={'name': name, 'guid': guid, 'map': properties})
 
-    process_ace_list(tx, gpo["Aces"], name, "GPO")
+    if "Aces" in gpo and gpo["Aces"] is not None:
+        process_ace_list(tx, gpo["Aces"], name, "GPO")
 
 
 def parse_computer(tx, computer):
@@ -195,12 +196,14 @@ def parse_computer(tx, computer):
 
     # Properties
     property_query = ""
+    props = {'map': computer['Properties'], 'name': computer_name}
     if computer['PrimaryGroup'] is None:
         property_query = "UNWIND {props} AS prop MERGE (n:Computer {name:prop.name}) SET n += prop.map"
     else:
+        props['pg'] = computer['PrimaryGroup']
         property_query = "UNWIND {props} AS prop MERGE (n:Computer {name:prop.name}) MERGE (m:Group {name:prop.pg}) MERGE (n)-[r:MemberOf {isacl:false}]->(m) SET n += prop.map"
 
-    tx.run(property_query, props={'map': computer['Properties'], 'name': computer_name, 'pg': computer['PrimaryGroup']})
+    tx.run(property_query, props=props)
 
     # Delegate query
     if computer['AllowedToDelegate'] is not None:
@@ -237,12 +240,14 @@ def parse_user(tx, user):
 
     user_name = user['Name']
     property_query = ''
+    props = {'map': user['Properties'], 'name': user_name}
     if user['PrimaryGroup'] is None:
         property_query = "UNWIND {props} AS prop MERGE (n:User {name:prop.name}) SET n += prop.map"
     else:
+        props['pg'] = user['PrimaryGroup']
         property_query = "UNWIND {props} AS prop MERGE (n:User {name:prop.name}) MERGE (m:Group {name:prop.pg}) MERGE (n)-[r:MemberOf {isacl:false}]->(m) SET n += prop.map"
 
-    tx.run(property_query, props={'map': user['Properties'], 'name': user_name, 'pg': user['PrimaryGroup']})
+    tx.run(property_query, props=props)
 
     # Delegation
     if 'AllowedToDelegate' in user and user['AllowedToDelegate'] is not None:
@@ -339,7 +344,8 @@ def parse_domain(tx, domain):
             tx.run(users_query, props={'domain': name, 'user': user})
 
     # ACEs
-    process_ace_list(tx, domain['Aces'], name, "Domain")
+    if 'Aces' in domain and domain['Aces'] is not None:
+        process_ace_list(tx, domain['Aces'], name, "Domain")
 
 def parse_session(tx, session):
     """Parse session.
