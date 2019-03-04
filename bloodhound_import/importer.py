@@ -37,27 +37,28 @@ def process_ace_list(tx, ace_list, objname, objtype):
 
     baseAceQuery = "UNWIND {{props}} AS prop MERGE (a:{} {{name:prop.principal}}) MERGE (b:{} {{name: prop.obj}}) MERGE (a)-[r:{} {{isacl:true}}]->(b)"
 
-    for entry in ace_list:
-        principal = entry['PrincipalName']
-        principaltype = entry['PrincipalType']
-        right = entry['RightName']
-        acetype = entry['AceType']
+    if entry in ace_list:
+        for entry in ace_list:
+            principal = entry['PrincipalName']
+            principaltype = entry['PrincipalType']
+            right = entry['RightName']
+            acetype = entry['AceType']
 
-        if objname == principal:
-            continue
+            if objname == principal:
+                continue
 
-        rights = []
-        if acetype in ACETYPE_MAP:
-            rights.append(ACETYPE_MAP[acetype])
-        elif right == "ExtendedRight":
-            rights.append(acetype)
+            rights = []
+            if acetype in ACETYPE_MAP:
+                rights.append(ACETYPE_MAP[acetype])
+            elif right == "ExtendedRight":
+                rights.append(acetype)
 
-        if right in RIGHTS_MAP:
-            rights.append(RIGHTS_MAP[right])
+            if right in RIGHTS_MAP:
+                rights.append(RIGHTS_MAP[right])
 
-        for right in rights:
-            query = baseAceQuery.format(principaltype.title(), objtype, right)
-            tx.run(query, props={'principal': principal, 'obj': objname})
+            for right in rights:
+                query = baseAceQuery.format(principaltype.title(), objtype, right)
+                tx.run(query, props={'principal': principal, 'obj': objname})
 
 
 def add_constraints(tx):
