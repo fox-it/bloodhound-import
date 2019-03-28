@@ -389,6 +389,8 @@ def parse_file(filename, driver):
 
     parsing_map = {'computers': parse_computer, 'users': parse_user, 'groups': parse_group, 'domains': parse_domain, 'sessions': parse_session, 'gpos': parse_gpo, 'ous': parse_ou, 'gpoadmins': parse_gpo_admin}
 
+    # Split the data into chunks, fixing some bugs with memory usage.
+    data_chunks = chunks(data[obj_type], 1000)
     count = 0
 
     parse_function = None
@@ -398,11 +400,13 @@ def parse_file(filename, driver):
         logging.error("Parsing function for object type: %s was not found.", obj_type)
         return
 
-    with driver.session() as session:
-        for entry in data[obj_type]:
-            count += 1
-            parse_function(session, entry)
-            if count % 1000 == 0:
-                logging.debug("%s/%s", count, total)
+    for chunk in data_chunks:
+        # Create a new session per chunk.
+        with driver.session() as session:
+            for entry in chunk:
+                count += 1
+                session.write_transaction(parse_function, entry)
+
+        logging.debug("%s/%s", count, total)
 
     logging.info("Completed file: %s", filename)
