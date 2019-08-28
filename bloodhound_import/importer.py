@@ -13,6 +13,8 @@ ACETYPE_MAP = {
     "All": "AllExtendedRights",
     "User-Force-Change-Password": "ForceChangePassword",
     "Member": "AddMember",
+    "AddMember": "AddMember",
+    "AllowedToAct": "AddAllowedToAct",
 }
 
 RIGHTS_MAP = {
@@ -427,7 +429,7 @@ def parse_file(filename, driver):
     obj_type = data['meta']['type']
     total = data['meta']['count']
 
-    parsing_map = {'computers': parse_computer, 'users': parse_user, 'groups': parse_group, 'domains': parse_domain, 'sessions': parse_session, 'gpos': parse_gpo, 'ous': parse_ou, 'gpoadmins': parse_gpo_admin}
+    parsing_map = {'computers': parse_computer, 'users': parse_user, 'groups': parse_group, 'domains': parse_domain, 'sessions': parse_session, 'gpos': parse_gpo, 'ous': parse_ou, 'gpoadmins': parse_gpo_admin, 'gpomembers': parse_gpo_admin}
 
     # Split the data into chunks, fixing some bugs with memory usage.
     data_chunks = chunks(data[obj_type], 1000)

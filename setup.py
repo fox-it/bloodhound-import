@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='bloodhound_import',
-      version='0.0.3',
+      version='0.0.4',
       description='BloodHound import from python',
       license='MIT',
       classifiers=[
