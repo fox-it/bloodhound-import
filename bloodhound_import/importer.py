@@ -13,6 +13,8 @@ ACETYPE_MAP = {
     "All": "AllExtendedRights",
     "User-Force-Change-Password": "ForceChangePassword",
     "Member": "AddMember",
+    "AddMember": "AddMember",
+    "AllowedToAct": "AddAllowedToAct",
 }
 
 RIGHTS_MAP = {
@@ -24,6 +26,7 @@ RIGHTS_MAP = {
     "ReadLAPSPassword": "ReadLAPSPassword"
 }
 
+SYNC_COUNT = 100
 
 def process_ace_list(tx, ace_list, objname, objtype):
     """Process the list of aces.
@@ -34,7 +37,7 @@ def process_ace_list(tx, ace_list, objname, objtype):
         objname {str} -- Name of the object: computername, groupname etc.
         objtype {str} -- Type of the object: Computer, User, Group etc.
     """
-
+    count = 0
     baseAceQuery = "UNWIND {{props}} AS prop MERGE (a:{} {{name:prop.principal}}) MERGE (b:{} {{name: prop.obj}}) MERGE (a)-[r:{} {{isacl:true}}]->(b)"
 
     for entry in ace_list:
@@ -58,6 +61,9 @@ def process_ace_list(tx, ace_list, objname, objtype):
         for right in rights:
             query = baseAceQuery.format(principaltype.title(), objtype, right)
             tx.run(query, props={'principal': principal, 'obj': objname})
+            count += 1
+            if count % SYNC_COUNT == 0:
+                tx.sync()
 
 
 def add_constraints(tx):
@@ -85,13 +91,16 @@ def create_computer_query(tx, computer, query, value, rel):
         value {[type]} -- Value to read from: LocalAdmins, DcomUsers or RemoteDesktopUsers
         rel {[type]} -- Value to set: AdminTo, ExecuteDCOM or CanRDP
     """
-
+    count = 0
     for entry in computer.get(value, []) or []:
         aType = entry['Type']
         aName = entry['Name']
         statement = query.format(aType, rel)
         props = {'name': computer['Name'], 'target': aName}
         tx.run(statement, props=props)
+        count += 1
+        if count % SYNC_COUNT == 0:
+            tx.sync()
 
 
 def parse_ou(tx, ou):
@@ -105,28 +114,40 @@ def parse_ou(tx, ou):
     properties = ou['Properties']
     property_query = "UNWIND {props} AS prop MERGE (n:OU {guid:prop.guid}) SET n += prop.map"
     tx.run(property_query, props={'guid': guid, 'map': properties})
-
+    count = 0
     if 'Links' in ou and ou['Links'] is not None:
         link_query = "UNWIND {props} as prop MERGE (n:OU {guid:prop.guid}) MERGE (m:GPO {name:prop.gpo}) MERGE (m)-[r:GpLink {enforced:prop.enforced, isacl:false}]->(n)"
         for link in ou['Links']:
             enforced = link['IsEnforced']
             target = link['Name']
             tx.run(link_query, props={'guid': guid, 'gpo': target, 'enforced': enforced})
+            count += 1
+            if count % SYNC_COUNT == 0:
+                tx.sync()
 
     if 'ChildOus' in ou and ou['ChildOus'] is not None:
         childou_query = "UNWIND {props} AS prop MERGE (n:OU {guid:prop.parent}) MERGE (m:OU {guid:prop.child}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
         for cou in ou['ChildOus']:
             tx.run(childou_query, props={'parent': guid, 'child': cou})
+            count += 1
+            if count % SYNC_COUNT == 0:
+                tx.sync()
 
     if 'Computers' in ou and ou['Computers'] is not None:
         computer_query = "UNWIND {props} AS prop MERGE (n:OU {guid:prop.ou}) MERGE (m:Computer {name:prop.comp}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
         for computer in ou['Computers']:
             tx.run(computer_query, props={'ou': guid, 'comp': computer})
+            count += 1
+            if count % SYNC_COUNT == 0:
+                tx.sync()
 
     if 'Users' in ou and ou['Users'] is not None:
         user_query = "UNWIND {props} AS prop MERGE (n:OU {guid:prop.ou}) MERGE (m:User {name:prop.user}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
         for user in ou['Users']:
             tx.run(user_query, props={'ou': guid, 'user': user})
+            count += 1
+            if count % SYNC_COUNT == 0:
+                tx.sync()
 
 def create_gpo_queries(tx, base_query, computers, objects, rel):
     """Creates the gpo queries.
@@ -137,12 +158,16 @@ def create_gpo_queries(tx, base_query, computers, objects, rel):
         objects {list} -- Objects to apply the gpos
         rel {str} -- Name
     """
+    count = 0
     for obj in objects:
         member = obj['Name']
         admin_type = obj['Type']
         query = base_query.format(admin_type, rel)
         for computer in computers:
             tx.run(query, props={"comp": computer, "member": member})
+            count += 1
+            if count % SYNC_COUNT == 0:
+                tx.sync()
 
 def parse_gpo_admin(tx, gpo_admin):
     """Parses a GPO admin
@@ -204,7 +229,7 @@ def parse_computer(tx, computer):
         property_query = "UNWIND {props} AS prop MERGE (n:Computer {name:prop.name}) MERGE (m:Group {name:prop.pg}) MERGE (n)-[r:MemberOf {isacl:false}]->(m) SET n += prop.map"
 
     tx.run(property_query, props=props)
-
+    count = 0
     # Delegate query
     if computer['AllowedToDelegate'] is not None:
         delegate_query = "UNWIND {props} AS prop MERGE (n:Computer {name: prop.name}) MERGE (m:Computer {name: prop.comp}) MERGE (n)-[r:AllowedToDelegate {isacl:false}]->(m)"
@@ -212,6 +237,9 @@ def parse_computer(tx, computer):
         for x in computer['AllowedToDelegate']:
             props.append({'name': computer_name, 'comp': x})
         tx.run(delegate_query, props=props)
+        count += 1
+        if count % SYNC_COUNT == 0:
+            tx.sync()
 
     # Localadmins, rdpers, dcom
     query = "UNWIND {{props}} AS prop MERGE (n:Computer {{name:prop.name}}) MERGE (m:{} {{name:prop.target}}) MERGE (m)-[r:{} {{isacl: false}}]->(n)"
@@ -248,7 +276,7 @@ def parse_user(tx, user):
         property_query = "UNWIND {props} AS prop MERGE (n:User {name:prop.name}) MERGE (m:Group {name:prop.pg}) MERGE (n)-[r:MemberOf {isacl:false}]->(m) SET n += prop.map"
 
     tx.run(property_query, props=props)
-
+    count = 0
     # Delegation
     if 'AllowedToDelegate' in user and user['AllowedToDelegate'] is not None:
         delegate_query = "UNWIND {props} AS prop MERGE (n:User {name: prop.name}) MERGE (m:Computer {name: prop.comp}) MERGE (n)-[r:AllowedToDelegate {isacl: false}]->(m)"
@@ -256,7 +284,9 @@ def parse_user(tx, user):
         for x in user['AllowedToDelegate']:
             props.append({'name': user_name, 'comp': x})
         tx.run(delegate_query, props=props)
-
+        count += 1
+        if count % SYNC_COUNT == 0:
+            tx.sync()
 
     # ACEs:
     if 'Aces' in user and user['Aces'] is not None:
@@ -270,7 +300,7 @@ def parse_group(tx, group):
         tx {neo4j.Session} -- Neo4j session
         group {dict} -- Single group object from the bloodhound json.
     """
-
+    count = 0
     name = group['Name']
     properties = group['Properties']
 
@@ -285,6 +315,9 @@ def parse_group(tx, group):
         mtype = member['MemberType']
         statement = query.format(mtype.title())
         tx.run(statement, props={'name': name, 'member': mname})
+        count += 1
+        if count % SYNC_COUNT == 0:
+            tx.sync()
 
     # Aces
     if 'Aces' in group and group['Aces'] is not None:
@@ -324,24 +357,33 @@ def parse_domain(tx, domain):
             if direction == 2:
                 tx.run(trusts_query, props={'a': target, 'b': name, 'transitive': transitive, 'direction': direction, 'trusttype': trust_type})
 
-
+    count = 0
     # Child OUs
     if 'ChildOus' in domain and domain['ChildOus'] is not None:
         childous_query = "UNWIND {props} AS prop MERGE (n:Domain {name:prop.domain}) MERGE (m:OU {guid:prop.guid}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
         for childou in domain['ChildOus']:
             tx.run(childous_query, props={'domain': name, 'guid': childou})
+            count += 1
+            if count % SYNC_COUNT == 0:
+                tx.sync()
 
     # Computers
     if 'Computers' in domain and domain['Computers'] is not None:
         computers_query = "UNWIND {props} AS prop MERGE (n:Domain {name:prop.domain}) MERGE (m:Computer {name:prop.comp}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
         for computer in domain["Computers"]:
             tx.run(computers_query, props={'domain': name, 'comp': computer})
+            count += 1
+            if count % SYNC_COUNT == 0:
+                tx.sync()
 
     # Users
     if 'Users' in domain and domain['Users'] is not None:
         users_query = "UNWIND {props} AS prop MERGE (n:Domain {name:prop.domain}) MERGE (m:User {name:prop.user}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
         for user in domain['Users']:
             tx.run(users_query, props={'domain': name, 'user': user})
+            count += 1
+            if count % SYNC_COUNT == 0:
+                tx.sync()
 
     # ACEs
     if 'Aces' in domain and domain['Aces'] is not None:
@@ -387,7 +429,7 @@ def parse_file(filename, driver):
     obj_type = data['meta']['type']
     total = data['meta']['count']
 
-    parsing_map = {'computers': parse_computer, 'users': parse_user, 'groups': parse_group, 'domains': parse_domain, 'sessions': parse_session, 'gpos': parse_gpo, 'ous': parse_ou, 'gpoadmins': parse_gpo_admin}
+    parsing_map = {'computers': parse_computer, 'users': parse_user, 'groups': parse_group, 'domains': parse_domain, 'sessions': parse_session, 'gpos': parse_gpo, 'ous': parse_ou, 'gpoadmins': parse_gpo_admin, 'gpomembers': parse_gpo_admin}
 
     # Split the data into chunks, fixing some bugs with memory usage.
     data_chunks = chunks(data[obj_type], 1000)
