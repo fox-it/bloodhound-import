@@ -1,13 +1,13 @@
 # bloodhound-import
 
-![Python 2.7 and 3 compatible](https://img.shields.io/badge/python-2.7%2C%203.x-blue.svg)
+![Python 2.7 and 3 compatible](https://img.shields.io/badge/python-3.7-blue.svg)
 ![PyPI version](https://img.shields.io/pypi/v/bloodhound_import.svg)
 ![License: MIT](https://img.shields.io/pypi/l/bloodhound_import.svg)
 
 Bloodhound-import is a tool to import bloodhound json files into neo4j.
 
 ## Dependencies and installation
-Bloodhound-import is compatible with python 2.7 and 3.5+. It requires the `neo4j-driver` library.
+Bloodhound-import is compatible python 3.7+ and the latest version is only compatible with bloodhound 3 imports. It requires the `neo4j-driver` library.
 
 Install with `pip install bloodhound_import` or clone the git and install with `sudo python setup.py install`.
 

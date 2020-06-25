@@ -2,6 +2,7 @@ import argparse
 import logging
 from bloodhound_import import database
 from bloodhound_import.importer import parse_file, add_constraints
+from neo4j.exceptions import ClientError
 
 def main():
     """
@@ -31,9 +32,12 @@ def main():
     driver = database.init_driver(arguments.database, arguments.port, arguments.database_user, arguments.database_password)
 
     try:
-        with driver.session() as session:
-            logging.debug("Adding constraints to the neo4j database")
-            session.write_transaction(add_constraints)
+        try:
+            with driver.session() as session:
+                logging.debug("Adding constraints to the neo4j database")
+                session.write_transaction(add_constraints)
+        except ClientError:
+            pass
 
         logging.info("Parsing %s files", len(arguments.files))
         for filename in arguments.files:

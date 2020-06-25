@@ -3,11 +3,17 @@
     Queries are borrowed from the BloodhoundAD project.
 """
 
+from dataclasses import dataclass
 import codecs
 import json
 import logging
 
-from neo4j import GraphDatabase
+
+@dataclass
+class Query:
+    query: str
+    properties: dict
+
 
 ACETYPE_MAP = {
     "All": "AllExtendedRights",
@@ -28,25 +34,22 @@ RIGHTS_MAP = {
 
 SYNC_COUNT = 100
 
-def process_ace_list(tx, ace_list, objname, objtype):
-    """Process the list of aces.
 
-    Arguments:
-        tx {neo4j.Session} -- Neo4j session
-        ace_list {list} -- Aces to parse.
-        objname {str} -- Name of the object: computername, groupname etc.
-        objtype {str} -- Type of the object: Computer, User, Group etc.
-    """
-    count = 0
-    baseAceQuery = "UNWIND {{props}} AS prop MERGE (a:{} {{name:prop.principal}}) MERGE (b:{} {{name: prop.obj}}) MERGE (a)-[r:{} {{isacl:true}}]->(b)"
+def build_add_edge_query(source_label: str, target_label: str, edge_type: str, edge_props: str):
+    """Build a standard edge insert query based on the given params"""
+    insert_query = 'UNWIND $props AS prop MERGE (n:Base {{objectid: prop.source}}) ON MATCH SET n:{0} ON CREATE SET n:{0} MERGE (m:Base {{objectid: prop.target}}) ON MATCH SET m:{1} ON CREATE SET m:{1} MERGE (n)-[r:{2} {3}]->(m)'
+    return insert_query.format(source_label, target_label, edge_type, edge_props)
 
+
+def process_ace_list(ace_list: list, objectid: str, objecttype: str) -> list:
+    queries = []
     for entry in ace_list:
-        principal = entry['PrincipalName']
+        principal = entry['PrincipalSID']
         principaltype = entry['PrincipalType']
         right = entry['RightName']
         acetype = entry['AceType']
 
-        if objname == principal:
+        if objectid == principal:
             continue
 
         rights = []
@@ -59,11 +62,17 @@ def process_ace_list(tx, ace_list, objname, objtype):
             rights.append(RIGHTS_MAP[right])
 
         for right in rights:
-            query = baseAceQuery.format(principaltype.title(), objtype, right)
-            tx.run(query, props={'principal': principal, 'obj': objname})
-            count += 1
-            if count % SYNC_COUNT == 0:
-                tx.sync()
+            query = build_add_edge_query(objecttype, principaltype, right, '{isacl: true, isinherited: prop.isinherited}')
+            props = dict(
+                source=objectid,
+                target=principal,
+                isinherited=entry['IsInherited'],
+            )
+            queries.append(
+                Query(query, props)
+            )
+
+    return queries
 
 
 def add_constraints(tx):
@@ -81,73 +90,58 @@ def add_constraints(tx):
     tx.run("CREATE CONSTRAINT ON (c:GPO) ASSERT c.name IS UNIQUE")
 
 
-def create_computer_query(tx, computer, query, value, rel):
-    """Creates the queries for a computer.
-
-    Arguments:
-        tx {neo4j.Session} -- Neo4j session
-        computer {dict} -- Single computer object.
-        query {str} -- Query to use.
-        value {[type]} -- Value to read from: LocalAdmins, DcomUsers or RemoteDesktopUsers
-        rel {[type]} -- Value to set: AdminTo, ExecuteDCOM or CanRDP
-    """
-    count = 0
-    for entry in computer.get(value, []) or []:
-        aType = entry['Type']
-        aName = entry['Name']
-        statement = query.format(aType, rel)
-        props = {'name': computer['Name'], 'target': aName}
-        tx.run(statement, props=props)
-        count += 1
-        if count % SYNC_COUNT == 0:
-            tx.sync()
-
-
 def parse_ou(tx, ou):
     """Parses a single ou.
 
     Arguments:
         tx {neo4j.Session} -- Neo4j session
-        gpo {dict} -- Single gpo object.
+        ou {dict} -- Single ou object.
     """
-    guid = ou['Guid']
-    properties = ou['Properties']
-    property_query = "UNWIND {props} AS prop MERGE (n:OU {guid:prop.guid}) SET n += prop.map"
-    tx.run(property_query, props={'guid': guid, 'map': properties})
-    count = 0
-    if 'Links' in ou and ou['Links'] is not None:
-        link_query = "UNWIND {props} as prop MERGE (n:OU {guid:prop.guid}) MERGE (m:GPO {name:prop.gpo}) MERGE (m)-[r:GpLink {enforced:prop.enforced, isacl:false}]->(n)"
-        for link in ou['Links']:
-            enforced = link['IsEnforced']
-            target = link['Name']
-            tx.run(link_query, props={'guid': guid, 'gpo': target, 'enforced': enforced})
-            count += 1
-            if count % SYNC_COUNT == 0:
-                tx.sync()
+    queries = []
+    identifier = ou['ObjectIdentifier'].upper()
+    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:OU ON CREATE SET n:OU SET n += prop.map'
+    props = {'map': ou['Properties'], 'source': identifier}
+    queries.append(Query(property_query, props))
 
-    if 'ChildOus' in ou and ou['ChildOus'] is not None:
-        childou_query = "UNWIND {props} AS prop MERGE (n:OU {guid:prop.parent}) MERGE (m:OU {guid:prop.child}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
-        for cou in ou['ChildOus']:
-            tx.run(childou_query, props={'parent': guid, 'child': cou})
-            count += 1
-            if count % SYNC_COUNT == 0:
-                tx.sync()
+    if 'Aces' in ou and ou['Aces'] is not None:
+        queries.extend(process_ace_list(ou['Aces'], identifier, "OU"))
 
-    if 'Computers' in ou and ou['Computers'] is not None:
-        computer_query = "UNWIND {props} AS prop MERGE (n:OU {guid:prop.ou}) MERGE (m:Computer {name:prop.comp}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
-        for computer in ou['Computers']:
-            tx.run(computer_query, props={'ou': guid, 'comp': computer})
-            count += 1
-            if count % SYNC_COUNT == 0:
-                tx.sync()
+    options = [
+        ('Users', 'User', 'Contains'),
+        ('Computers', 'Computer', 'Contains'),
+        ('ChildOus', 'OU', 'Contains'),
+    ]
 
-    if 'Users' in ou and ou['Users'] is not None:
-        user_query = "UNWIND {props} AS prop MERGE (n:OU {guid:prop.ou}) MERGE (m:User {name:prop.user}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
-        for user in ou['Users']:
-            tx.run(user_query, props={'ou': guid, 'user': user})
-            count += 1
-            if count % SYNC_COUNT == 0:
-                tx.sync()
+    for option, member_type, edge_name in options:
+        if option in ou and ou[option]:
+            targets = ou[option]
+            for target in targets:
+                query = build_add_edge_query('OU', member_type, edge_name, '{isacl: false}')
+                queries.append(Query(query, dict(source=identifier, target=target)))
+
+    if 'Links' in ou and ou['Links']:
+        query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
+        for gpo in ou['Links']:
+            queries.append(Query(query, dict(source=identifier, target=gpo['Guid'].upper(), enforced=gpo['IsEnforced'])))
+
+    options = [
+        ('LocalAdmins', 'AdminTo'),
+        ('PSRemoteUsers', 'CanPSRemote'),
+        ('DcomUsers', 'ExecuteDCOM'),
+        ('RemoteDesktopUsers', 'CanRDP'),
+    ]
+
+    for option, edge_name in options:
+        if option in ou and ou[option]:
+            targets = ou[option]
+            for target in targets:
+                query = build_add_edge_query(target['MemberType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
+                for computer in ou['Computers']:
+                    queries.append(Query(query, dict(target=computer, source=target['MemberId'])))
+
+    for entry in queries:
+        tx.run(entry.query, props=entry.properties)
+
 
 def create_gpo_queries(tx, base_query, computers, objects, rel):
     """Creates the gpo queries.
@@ -169,28 +163,6 @@ def create_gpo_queries(tx, base_query, computers, objects, rel):
             if count % SYNC_COUNT == 0:
                 tx.sync()
 
-def parse_gpo_admin(tx, gpo_admin):
-    """Parses a GPO admin
-
-    Arguments:
-        tx {neo4j.Session} -- Neo4j session
-        gpo_admin {dict} -- Single gpo admin object
-    """
-    base_query = "UNWIND {{props}} AS prop MERGE (n:{} {{name:prop.member}}) MERGE (m:Computer {{name:prop.comp}}) MERGE (n)-[r:{} {{isacl:false}}]->(m)"
-
-    computers = []
-    if 'AffectedComputers' in gpo_admin and gpo_admin['AffectedComputers'] is not None:
-        computers = gpo_admin['AffectedComputers']
-
-    if 'LocalAdmins' in gpo_admin and gpo_admin['LocalAdmins'] is not None:
-        create_gpo_queries(tx, base_query, computers, gpo_admin['LocalAdmins'], "AdminTo")
-
-    if 'RemoteDesktopUsers' in gpo_admin and gpo_admin['RemoteDesktopUsers'] is not None:
-        create_gpo_queries(tx, base_query, computers, gpo_admin['RemoteDesktopUsers'], "CanRDP")
-
-    if 'DcomUsers' in gpo_admin and gpo_admin['DcomUsers'] is not None:
-        create_gpo_queries(tx, base_query, computers, gpo_admin['DcomUsers'], "ExecuteDCOM")
-
 
 def parse_gpo(tx, gpo):
     """Parses a single GPO.
@@ -199,15 +171,18 @@ def parse_gpo(tx, gpo):
         tx {neo4j.Session} -- Neo4j session
         gpo {dict} -- Single gpo object.
     """
-    name = gpo["Name"]
-    guid = gpo["Guid"]
-    properties = gpo["Properties"]
+    queries = []
+    identifier = gpo['ObjectIdentifier']
 
-    query = "UNWIND {props} AS prop MERGE (n:GPO {name:prop.name}) SET n.guid=prop.guid, n+=prop.map"
-    tx.run(query, props={'name': name, 'guid': guid, 'map': properties})
+    query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:GPO ON CREATE SET n:GPO SET n += prop.map'
+    props = {'map': gpo['Properties'], 'source': identifier}
+    queries.append(Query(query, props))
 
     if "Aces" in gpo and gpo["Aces"] is not None:
-        process_ace_list(tx, gpo["Aces"], name, "GPO")
+        queries.extend(process_ace_list(gpo['Aces'], identifier, "GPO"))
+
+    for entry in queries:
+        tx.run(entry.query, props=entry.properties)
 
 
 def parse_computer(tx, computer):
@@ -217,45 +192,48 @@ def parse_computer(tx, computer):
         tx {neo4j.Session} -- Neo4j session
         computer {dict} -- Single computer object.
     """
-    computer_name = computer['Name']
+    queries = []
+    identifier = computer['ObjectIdentifier']
 
-    # Properties
-    property_query = ""
-    props = {'map': computer['Properties'], 'name': computer_name}
-    if computer['PrimaryGroup'] is None:
-        property_query = "UNWIND {props} AS prop MERGE (n:Computer {name:prop.name}) SET n += prop.map"
-    else:
-        props['pg'] = computer['PrimaryGroup']
-        property_query = "UNWIND {props} AS prop MERGE (n:Computer {name:prop.name}) MERGE (m:Group {name:prop.pg}) MERGE (n)-[r:MemberOf {isacl:false}]->(m) SET n += prop.map"
+    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:Computer ON CREATE SET n:Computer SET n += prop.map'
+    props = {'map': computer['Properties'], 'source': identifier}
 
-    tx.run(property_query, props=props)
-    count = 0
-    # Delegate query
-    if computer['AllowedToDelegate'] is not None:
-        delegate_query = "UNWIND {props} AS prop MERGE (n:Computer {name: prop.name}) MERGE (m:Computer {name: prop.comp}) MERGE (n)-[r:AllowedToDelegate {isacl:false}]->(m)"
-        props = []
-        for x in computer['AllowedToDelegate']:
-            props.append({'name': computer_name, 'comp': x})
-        tx.run(delegate_query, props=props)
-        count += 1
-        if count % SYNC_COUNT == 0:
-            tx.sync()
+    queries.append(Query(property_query, props))
 
-    # Localadmins, rdpers, dcom
-    query = "UNWIND {{props}} AS prop MERGE (n:Computer {{name:prop.name}}) MERGE (m:{} {{name:prop.target}}) MERGE (m)-[r:{} {{isacl: false}}]->(n)"
+    if 'PrimaryGroupSid' in computer and computer['PrimaryGroupSid']:
+        query = build_add_edge_query('Computer', 'Group', 'MemberOf', '{isacl:false}')
+        queries.append(Query(query, dict(source=identifier, target=computer['PrimaryGroupSid'])))
 
-    # DCOM
-    create_computer_query(tx, computer, query, 'LocalAdmins', 'AdminTo')
+    if 'AllowedToDelegate' in computer and computer['AllowedToDelegate']:
+        query = build_add_edge_query('Computer', 'Group', 'MemberOf', '{isacl:false}')
+        for entry in computer['AllowedToDelegate']:
+            queries.append(Query(query, dict(source=identifier, target=entry)))
 
-    # Local Admins
-    create_computer_query(tx, computer, query, 'DcomUsers', 'ExecuteDCOM')
+    options = [
+        ('AllowedToAct', 'AllowedToAct'),
+        ('LocalAdmins', 'AdminTo'),
+        ('RemoteDesktopUsers', 'CanRDP'),
+        ('DcomUsers', 'ExecuteDCOM'),
+        ('PSRemoteUsers', 'CanPSRemote')
+    ]
 
-    # RDP
-    create_computer_query(tx, computer, query, 'RemoteDesktopUsers', 'CanRDP')
+    for option, edge_name in options:
+        if option in computer and computer[option]:
+            targets = computer[option]
+            for target in targets:
+                query = build_add_edge_query(target['MemberType'], 'Computer', edge_name, '{isacl:false, fromgpo: false}')
+                queries.append(Query(query, dict(source=target['MemberId'],target=identifier)))
 
-    # ACEs
+    if 'Sessions' in computer and computer['Sessions']:
+        query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false}')
+        for entry in computer['Sessions']:
+            queries.append(Query(query, dict(source=entry['MemberId'], target=identifier)))
+
     if 'Aces' in computer and computer['Aces'] is not None:
-        process_ace_list(tx, computer['Aces'], computer_name, "Computer")
+        queries.extend(process_ace_list(computer['Aces'], identifier, "Computer"))
+
+    for entry in queries:
+        tx.run(entry.query, props=entry.properties)
 
 
 def parse_user(tx, user):
@@ -265,32 +243,30 @@ def parse_user(tx, user):
         tx {neo4j.Session} -- Neo4j session
         user {dict} -- Single user object from the bloodhound json.
     """
+    queries = []
 
-    user_name = user['Name']
-    property_query = ''
-    props = {'map': user['Properties'], 'name': user_name}
-    if user['PrimaryGroup'] is None:
-        property_query = "UNWIND {props} AS prop MERGE (n:User {name:prop.name}) SET n += prop.map"
-    else:
-        props['pg'] = user['PrimaryGroup']
-        property_query = "UNWIND {props} AS prop MERGE (n:User {name:prop.name}) MERGE (m:Group {name:prop.pg}) MERGE (n)-[r:MemberOf {isacl:false}]->(m) SET n += prop.map"
+    identifier = user['ObjectIdentifier']
+    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:User ON CREATE SET n:User SET n += prop.map'
+    props = {'map': user['Properties'], 'source': identifier}
 
-    tx.run(property_query, props=props)
-    count = 0
-    # Delegation
-    if 'AllowedToDelegate' in user and user['AllowedToDelegate'] is not None:
-        delegate_query = "UNWIND {props} AS prop MERGE (n:User {name: prop.name}) MERGE (m:Computer {name: prop.comp}) MERGE (n)-[r:AllowedToDelegate {isacl: false}]->(m)"
-        props = []
-        for x in user['AllowedToDelegate']:
-            props.append({'name': user_name, 'comp': x})
-        tx.run(delegate_query, props=props)
-        count += 1
-        if count % SYNC_COUNT == 0:
-            tx.sync()
+    queries.append(Query(property_query, props))
 
-    # ACEs:
+    if 'PrimaryGroupSid' in user and user['PrimaryGroupSid']:
+        query = build_add_edge_query('User', 'Group', 'MemberOf', '{isacl: false}')
+        queries.append(Query(query, dict(source=identifier, target=user['PrimaryGroupSid'])))
+
+    if 'AllowedToDelegate' in  user and user['AllowedToDelegate']:
+        query = build_add_edge_query('User', 'Computer', 'AllowedToDelegate', '{isacl: false}')
+        for entry in user['AllowedToDelegate']:
+            queries.append(Query(query, dict(source=identifier, target=entry)))
+
+    # TODO add HasSIDHistory objects
+
     if 'Aces' in user and user['Aces'] is not None:
-        process_ace_list(tx, user['Aces'], user_name, "User")
+        queries.extend(process_ace_list(user['Aces'], identifier, "User"))
+
+    for entry in queries:
+        tx.run(entry.query, props=entry.properties)
 
 
 def parse_group(tx, group):
@@ -300,28 +276,26 @@ def parse_group(tx, group):
         tx {neo4j.Session} -- Neo4j session
         group {dict} -- Single group object from the bloodhound json.
     """
-    count = 0
-    name = group['Name']
+    queries = []
     properties = group['Properties']
+    identifier = group['ObjectIdentifier']
+    aces = group['Aces']
+    members = group['Members']
 
-    property_query = "UNWIND {props} AS prop MERGE (n:Group {name:prop.name}) SET n += prop.map"
+    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:Group ON CREATE SET n:Group SET n += prop.map'
+    props = {'map': properties, 'source': identifier}
 
-    tx.run(property_query, props={'map': properties, 'name': name})
+    queries.append(Query(property_query, props))
 
-    query = "UNWIND {{props}} AS prop MERGE (n:Group {{name: prop.name}}) MERGE (m:{} {{name:prop.member}}) MERGE (m)-[r:MemberOf {{isacl:false}}]->(n)"
-
-    for member in group['Members']:
-        mname = member['MemberName']
-        mtype = member['MemberType']
-        statement = query.format(mtype.title())
-        tx.run(statement, props={'name': name, 'member': mname})
-        count += 1
-        if count % SYNC_COUNT == 0:
-            tx.sync()
-
-    # Aces
     if 'Aces' in group and group['Aces'] is not None:
-        process_ace_list(tx, group['Aces'], name, "Group")
+        queries.extend(process_ace_list(group['Aces'], identifier, "Group"))
+
+    for member in members:
+        query = build_add_edge_query('Group', member['MemberType'], 'MemberOf', '{isacl: false}')
+        queries.append(Query(query, dict(source=identifier, target=member['MemberId'])))
+
+    for entry in queries:
+        tx.run(entry.query, props=entry.properties)
 
 
 def parse_domain(tx, domain):
@@ -331,75 +305,81 @@ def parse_domain(tx, domain):
         tx {neo4j.Session} -- Neo4j session
         domain {dict} -- Single domain object from the bloodhound json.
     """
+    queries = []
+    identifier = domain['ObjectIdentifier']
+    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:Domain ON CREATE SET n:Domain SET n += prop.map'
+    props = {'map': domain['Properties'], 'source': identifier}
+    queries.append(Query(property_query, props))
 
-    name = domain['Name']
-    # Properties
-    query = "UNWIND {props} AS prop MERGE (n:Domain {name:prop.name}) SET n += prop.map"
-    tx.run(query, props={'map': domain['Properties'], 'name': name})
-
-    # Links
-    if 'Links' in domain and domain['Links'] is not None:
-        links_query = "UNWIND {props} as prop MERGE (n:Domain {name:prop.domain}) MERGE (m:GPO {name:prop.gpo}) MERGE (m)-[r:GpLink {enforced:prop.enforced, isacl:false}]->(n)"
-        for link in domain['Links']:
-            enforced = link['IsEnforced']
-            target = link['Name']
-            tx.run(links_query, props={'domain': name, 'gpo': target, 'enforced': enforced})
-
-    # Trusts
-    trusts_query = "UNWIND {props} AS prop MERGE (n:Domain {name: prop.a}) MERGE (m:Domain {name: prop.b}) MERGE (n)-[:TrustedBy {trusttype : prop.trusttype, transitive: prop.transitive, isacl:false}]->(m)"
-    if 'Trusts' in domain and domain['Trusts'] is not None:
-        for trust in domain['Trusts']:
-            target = trust['TargetName']
-            transitive = trust['IsTransitive']
-            direction = trust['TrustDirection']
-            trust_type = trust['TrustType']
-            tx.run(trusts_query, props={'a': name, 'b': target, 'transitive': transitive, 'direction': direction, 'trusttype': trust_type})
-            if direction == 2:
-                tx.run(trusts_query, props={'a': target, 'b': name, 'transitive': transitive, 'direction': direction, 'trusttype': trust_type})
-
-    count = 0
-    # Child OUs
-    if 'ChildOus' in domain and domain['ChildOus'] is not None:
-        childous_query = "UNWIND {props} AS prop MERGE (n:Domain {name:prop.domain}) MERGE (m:OU {guid:prop.guid}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
-        for childou in domain['ChildOus']:
-            tx.run(childous_query, props={'domain': name, 'guid': childou})
-            count += 1
-            if count % SYNC_COUNT == 0:
-                tx.sync()
-
-    # Computers
-    if 'Computers' in domain and domain['Computers'] is not None:
-        computers_query = "UNWIND {props} AS prop MERGE (n:Domain {name:prop.domain}) MERGE (m:Computer {name:prop.comp}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
-        for computer in domain["Computers"]:
-            tx.run(computers_query, props={'domain': name, 'comp': computer})
-            count += 1
-            if count % SYNC_COUNT == 0:
-                tx.sync()
-
-    # Users
-    if 'Users' in domain and domain['Users'] is not None:
-        users_query = "UNWIND {props} AS prop MERGE (n:Domain {name:prop.domain}) MERGE (m:User {name:prop.user}) MERGE (n)-[r:Contains {isacl:false}]->(m)"
-        for user in domain['Users']:
-            tx.run(users_query, props={'domain': name, 'user': user})
-            count += 1
-            if count % SYNC_COUNT == 0:
-                tx.sync()
-
-    # ACEs
     if 'Aces' in domain and domain['Aces'] is not None:
-        process_ace_list(tx, domain['Aces'], name, "Domain")
+        queries.extend(process_ace_list(domain['Aces'], identifier, 'Domain'))
 
-def parse_session(tx, session):
-    """Parse session.
+    trust_map = {0: 'ParentChild', 1: 'CrossLink', 2: 'Forest', 3: 'External', 4: 'Unknown'}
+    if 'Trusts' in domain and domain['Trusts'] is not None:
+        query = build_add_edge_query('Domain', 'Domain', 'TrustedBy', '{sidfiltering: prop.sidfiltering, trusttype: prop.trusttype, transitive: prop.transitive, isacl: false}')
+        for trust in domain['Trusts']:
+            trust_type = trust['TrustType']
+            direction = trust['TrustDirection']
+            props = {}
+            if direction in [1, 3]:
+                props = dict(
+                    source=identifier,
+                    target=trust['TargetDomainSid'],
+                    trusttype=trust_map[trust_type],
+                    transitive=trust['IsTransitive'],
+                    sidfiltering=trust['SidFilteringEnabled'],
+                )
+            elif direction in [2, 4]:
+                props = dict(
+                    target=identifier,
+                    source=trust['TargetDomainSid'],
+                    trusttype=trust_map[trust_type],
+                    transitive=trust['IsTransitive'],
+                    sidfiltering=trust['SidFilteringEnabled'],
+                )
+            else:
+                logging.error("Could not determine direction of trust... direction: %s", direction)
+                continue
+            queries.append(Query(query, props))
 
-    Arguments:
-        tx {ses} -- [description]
-        session {dict} -- dict object holding the information
-    """
-    query = "UNWIND {props} AS prop MERGE (n:User {name:prop.user}) MERGE (m:Computer {name:prop.comp}) MERGE (m)-[r:HasSession {isacl:false}]->(n)"
-    name = session['UserName']
-    comp = session['ComputerName']
-    tx.run(query, props={'comp': comp, 'user': name})
+    options = [
+        ('Users', 'User', 'Contains'),
+        ('Computers', 'Computer', 'Contains'),
+        ('ChildOus', 'OU', 'Contains'),
+    ]
+
+    for option, member_type, edge_name in options:
+        if option in domain and domain[option]:
+            targets = domain[option]
+            for target in targets:
+                query = build_add_edge_query('OU', member_type, edge_name, '{isacl: false}')
+                queries.append(Query(query, dict(source=identifier, target=target)))
+
+    if 'Links' in domain and domain['Links']:
+        query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
+        for gpo in domain['Links']:
+            queries.append(
+                Query(query, dict(source=identifier, target=gpo['Guid'].upper(), enforced=gpo['IsEnforced'])))
+
+    options = [
+        ('LocalAdmins', 'AdminTo'),
+        ('PSRemoteUsers', 'CanPSRemote'),
+        ('DcomUsers', 'ExecuteDCOM'),
+        ('RemoteDesktopUsers', 'CanRDP'),
+    ]
+
+    for option, edge_name in options:
+        if option in domain and domain[option]:
+            targets = domain[option]
+            for target in targets:
+                query = build_add_edge_query(target['MemberType'], 'Computer', edge_name,
+                                             '{isacl: false, fromgpo: true}')
+                for computer in domain['Computers']:
+                    queries.append(Query(query, dict(target=computer, source=target['MemberId'])))
+
+    for entry in queries:
+        tx.run(entry.query, props=entry.properties)
+
 
 def chunks(l, n):
     """Creates chunks from a list.
@@ -429,7 +409,14 @@ def parse_file(filename, driver):
     obj_type = data['meta']['type']
     total = data['meta']['count']
 
-    parsing_map = {'computers': parse_computer, 'users': parse_user, 'groups': parse_group, 'domains': parse_domain, 'sessions': parse_session, 'gpos': parse_gpo, 'ous': parse_ou, 'gpoadmins': parse_gpo_admin, 'gpomembers': parse_gpo_admin}
+    parsing_map = {
+        'computers': parse_computer,
+        'users': parse_user,
+        'groups': parse_group,
+        'domains': parse_domain,
+        'gpos': parse_gpo,
+        'ous': parse_ou
+    }
 
     # Split the data into chunks, fixing some bugs with memory usage.
     data_chunks = chunks(data[obj_type], 1000)
