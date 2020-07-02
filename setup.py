@@ -1,17 +1,13 @@
 from setuptools import setup
 
 setup(name='bloodhound_import',
-      version='0.0.4',
+      version='0.0.5',
       description='BloodHound import from python',
       license='MIT',
       classifiers=[
           'Intended Audience :: Information Technology',
           'License :: OSI Approved :: MIT License',
-          'Programming Language :: Python :: 2',
-          'Programming Language :: Python :: 2.7',
-          'Programming Language :: Python :: 3',
-          'Programming Language :: Python :: 3.5',
-          'Programming Language :: Python :: 3.6',
+          'Programming Language :: Python :: 3.7',
       ],
       author='Matthijs Gielen / Fox-IT',
       author_email='matthijs.gielen@fox-it.com',
