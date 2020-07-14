@@ -291,8 +291,8 @@ def parse_group(tx, group):
         queries.extend(process_ace_list(group['Aces'], identifier, "Group"))
 
     for member in members:
-        query = build_add_edge_query('Group', member['MemberType'], 'MemberOf', '{isacl: false}')
-        queries.append(Query(query, dict(source=identifier, target=member['MemberId'])))
+        query = build_add_edge_query(member['MemberType'], 'Group', 'MemberOf', '{isacl: false}')
+        queries.append(Query(query, dict(source=member['MemberId'], target=identifier)))
 
     for entry in queries:
         tx.run(entry.query, props=entry.properties)
