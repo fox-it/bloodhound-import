@@ -2,7 +2,6 @@
 Code borrowed from
 https://github.com/fox-it/aclpwn.py/blob/master/aclpwn/database.py
 """
-from __future__ import unicode_literals, print_function
 from neo4j import GraphDatabase
 import platform
 import json
