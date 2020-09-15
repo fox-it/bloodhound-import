@@ -8,10 +8,12 @@ import platform
 import json
 import os
 
+
 def init_driver(ip, port, user, password):
     uri = "bolt://{}:{}".format(ip, port)
     driver = GraphDatabase.driver(uri, auth=(user, password))
     return driver
+
 
 def detect_db_config():
     """
@@ -68,4 +70,3 @@ def detect_db_config():
     except KeyError:
         password = None
     return username, password
-
