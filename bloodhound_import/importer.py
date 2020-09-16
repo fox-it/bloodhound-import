@@ -343,6 +343,7 @@ def parse_file(filename: str, driver: neo4j.GraphDatabase):
         meta = ijson.items(f, 'meta')
         for o in meta:
             obj_type = o['type']
+            total = o['count']
 
     parsing_map = {
         'computers': parse_computer,
@@ -360,11 +361,16 @@ def parse_file(filename: str, driver: neo4j.GraphDatabase):
         logging.error("Parsing function for object type: %s was not found.", obj_type)
         return
 
+    ten_percent = total // 10 if total > 10 else 1
+    count = 0
     f = codecs.open(filename, 'r', encoding='utf-8-sig')
     objs = ijson.items(f, '.'.join([obj_type, 'item']))
     with driver.session() as session:
         for entry in objs:
             session.write_transaction(parse_function, entry)
+            count = count + 1
+            if count % ten_percent == 0:
+                logging.info("Parsed %d out of %d records in %s.", count, total, filename)
 
     f.close()
     logging.info("Completed file: %s", filename)
