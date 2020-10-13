@@ -367,8 +367,11 @@ def parse_file(filename: str, driver: neo4j.GraphDatabase):
     objs = ijson.items(f, '.'.join([obj_type, 'item']))
     with driver.session() as session:
         for entry in objs:
-            session.write_transaction(parse_function, entry)
-            count = count + 1
+            try:
+                session.write_transaction(parse_function, entry)
+                count = count + 1
+            except neo4j.exceptions.ConstraintError as e:
+                print(e)
             if count % ten_percent == 0:
                 logging.info("Parsed %d out of %d records in %s.", count, total, filename)
 
