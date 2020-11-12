@@ -62,7 +62,7 @@ def process_ace_list(ace_list: list, objectid: str, objecttype: str) -> list:
             rights.append(RIGHTS_MAP[right])
 
         for right in rights:
-            query = build_add_edge_query(objecttype, principaltype, right, '{isacl: true, isinherited: prop.isinherited}')
+            query = build_add_edge_query(principaltype, objecttype, right, '{isacl: true, isinherited: prop.isinherited}')
             props = dict(
                 source=principal,
                 target=objectid,
