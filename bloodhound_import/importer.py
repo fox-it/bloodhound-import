@@ -5,8 +5,9 @@
 
 from dataclasses import dataclass
 import codecs
-import json
+import ijson
 import logging
+import neo4j
 
 
 @dataclass
@@ -35,14 +36,13 @@ RIGHTS_MAP = {
 SYNC_COUNT = 100
 
 
-def build_add_edge_query(source_label: str, target_label: str, edge_type: str, edge_props: str):
+def build_add_edge_query(source_label: str, target_label: str, edge_type: str, edge_props: str) -> str:
     """Build a standard edge insert query based on the given params"""
     insert_query = 'UNWIND $props AS prop MERGE (n:Base {{objectid: prop.source}}) ON MATCH SET n:{0} ON CREATE SET n:{0} MERGE (m:Base {{objectid: prop.target}}) ON MATCH SET m:{1} ON CREATE SET m:{1} MERGE (n)-[r:{2} {3}]->(m)'
     return insert_query.format(source_label, target_label, edge_type, edge_props)
 
 
-def process_ace_list(ace_list: list, objectid: str, objecttype: str) -> list:
-    queries = []
+def process_ace_list(ace_list: list, objectid: str, objecttype: str, tx: neo4j.Transaction) -> None:
     for entry in ace_list:
         principal = entry['PrincipalSID']
         principaltype = entry['PrincipalType']
@@ -68,20 +68,15 @@ def process_ace_list(ace_list: list, objectid: str, objecttype: str) -> list:
                 target=objectid,
                 isinherited=entry['IsInherited'],
             )
-            queries.append(
-                Query(query, props)
-            )
-
-    return queries
+            tx.run(query, props=props)
 
 
-def add_constraints(tx):
+def add_constraints(tx: neo4j.Transaction):
     """Adds bloodhound contraints to neo4j
 
     Arguments:
-        tx {neo4j.Session} -- Neo4j session.
+        tx {neo4j.Transaction} -- Neo4j transaction.
     """
-
     tx.run("CREATE CONSTRAINT ON (c:User) ASSERT c.name IS UNIQUE")
     tx.run("CREATE CONSTRAINT ON (c:Computer) ASSERT c.name IS UNIQUE")
     tx.run("CREATE CONSTRAINT ON (c:Group) ASSERT c.name IS UNIQUE")
@@ -90,21 +85,20 @@ def add_constraints(tx):
     tx.run("CREATE CONSTRAINT ON (c:GPO) ASSERT c.name IS UNIQUE")
 
 
-def parse_ou(tx, ou):
+def parse_ou(tx: neo4j.Transaction, ou: dict):
     """Parses a single ou.
 
     Arguments:
-        tx {neo4j.Session} -- Neo4j session
+        tx {neo4j.Transaction} -- Neo4j session
         ou {dict} -- Single ou object.
     """
-    queries = []
     identifier = ou['ObjectIdentifier'].upper()
     property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:OU ON CREATE SET n:OU SET n += prop.map'
     props = {'map': ou['Properties'], 'source': identifier}
-    queries.append(Query(property_query, props))
+    tx.run(property_query, props=props)
 
     if 'Aces' in ou and ou['Aces'] is not None:
-        queries.extend(process_ace_list(ou['Aces'], identifier, "OU"))
+        process_ace_list(ou['Aces'], identifier, "OU", tx)
 
     options = [
         ('Users', 'User', 'Contains'),
@@ -117,12 +111,12 @@ def parse_ou(tx, ou):
             targets = ou[option]
             for target in targets:
                 query = build_add_edge_query('OU', member_type, edge_name, '{isacl: false}')
-                queries.append(Query(query, dict(source=identifier, target=target)))
+                tx.run(query, props=dict(source=identifier, target=target))
 
     if 'Links' in ou and ou['Links']:
         query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
         for gpo in ou['Links']:
-            queries.append(Query(query, dict(source=identifier, target=gpo['Guid'].upper(), enforced=gpo['IsEnforced'])))
+            tx.run(query, props=dict(source=identifier, target=gpo['Guid'].upper(), enforced=gpo['IsEnforced']))
 
     options = [
         ('LocalAdmins', 'AdminTo'),
@@ -137,77 +131,48 @@ def parse_ou(tx, ou):
             for target in targets:
                 query = build_add_edge_query(target['MemberType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
                 for computer in ou['Computers']:
-                    queries.append(Query(query, dict(target=computer, source=target['MemberId'])))
-
-    for entry in queries:
-        tx.run(entry.query, props=entry.properties)
+                    tx.run(query, props=dict(target=computer, source=target['MemberId']))
 
 
-def create_gpo_queries(tx, base_query, computers, objects, rel):
-    """Creates the gpo queries.
-    Arguments:
-        tx {neo4j.Session} -- Neo4j session
-        base_query {str} -- Query to base queries on.
-        computers {list} -- Affected computers
-        objects {list} -- Objects to apply the gpos
-        rel {str} -- Name
-    """
-    count = 0
-    for obj in objects:
-        member = obj['Name']
-        admin_type = obj['Type']
-        query = base_query.format(admin_type, rel)
-        for computer in computers:
-            tx.run(query, props={"comp": computer, "member": member})
-            count += 1
-            if count % SYNC_COUNT == 0:
-                tx.sync()
-
-
-def parse_gpo(tx, gpo):
+def parse_gpo(tx: neo4j.Transaction, gpo: dict):
     """Parses a single GPO.
 
     Arguments:
-        tx {neo4j.Session} -- Neo4j session
+        tx {neo4j.Transaction} -- Neo4j transaction
         gpo {dict} -- Single gpo object.
     """
-    queries = []
     identifier = gpo['ObjectIdentifier']
 
     query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:GPO ON CREATE SET n:GPO SET n += prop.map'
     props = {'map': gpo['Properties'], 'source': identifier}
-    queries.append(Query(query, props))
+    tx.run(query, props=props)
 
     if "Aces" in gpo and gpo["Aces"] is not None:
-        queries.extend(process_ace_list(gpo['Aces'], identifier, "GPO"))
-
-    for entry in queries:
-        tx.run(entry.query, props=entry.properties)
+        process_ace_list(gpo['Aces'], identifier, "GPO", tx)
 
 
-def parse_computer(tx, computer):
+def parse_computer(tx: neo4j.Transaction, computer: dict):
     """Parse a computer object.
 
     Arguments:
-        tx {neo4j.Session} -- Neo4j session
+        session {neo4j.Transaction} -- Neo4j transaction
         computer {dict} -- Single computer object.
     """
-    queries = []
     identifier = computer['ObjectIdentifier']
 
     property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:Computer ON CREATE SET n:Computer SET n += prop.map'
     props = {'map': computer['Properties'], 'source': identifier}
 
-    queries.append(Query(property_query, props))
+    tx.run(property_query, props=props)
 
     if 'PrimaryGroupSid' in computer and computer['PrimaryGroupSid']:
         query = build_add_edge_query('Computer', 'Group', 'MemberOf', '{isacl:false}')
-        queries.append(Query(query, dict(source=identifier, target=computer['PrimaryGroupSid'])))
+        tx.run(query, props=dict(source=identifier, target=computer['PrimaryGroupSid']))
 
     if 'AllowedToDelegate' in computer and computer['AllowedToDelegate']:
         query = build_add_edge_query('Computer', 'Group', 'MemberOf', '{isacl:false}')
         for entry in computer['AllowedToDelegate']:
-            queries.append(Query(query, dict(source=identifier, target=entry)))
+            tx.run(query, props=dict(source=identifier, target=entry))
 
     options = [
         ('AllowedToAct', 'AllowedToAct'),
@@ -222,97 +187,83 @@ def parse_computer(tx, computer):
             targets = computer[option]
             for target in targets:
                 query = build_add_edge_query(target['MemberType'], 'Computer', edge_name, '{isacl:false, fromgpo: false}')
-                queries.append(Query(query, dict(source=target['MemberId'],target=identifier)))
+                tx.run(query, props=dict(source=target['MemberId'], target=identifier))
 
     if 'Sessions' in computer and computer['Sessions']:
         query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false}')
         for entry in computer['Sessions']:
-            queries.append(Query(query, dict(source=entry['UserId'], target=identifier)))
+            tx.run(query, props=dict(source=entry['UserId'], target=identifier))
+
 
     if 'Aces' in computer and computer['Aces'] is not None:
-        queries.extend(process_ace_list(computer['Aces'], identifier, "Computer"))
-
-    for entry in queries:
-        tx.run(entry.query, props=entry.properties)
+        process_ace_list(computer['Aces'], identifier, "Computer", tx)
 
 
-def parse_user(tx, user):
+def parse_user(tx: neo4j.Transaction, user: dict):
     """Parse a user object.
 
     Arguments:
-        tx {neo4j.Session} -- Neo4j session
+        tx {neo4j.Transaction} -- Neo4j session
         user {dict} -- Single user object from the bloodhound json.
     """
-    queries = []
-
     identifier = user['ObjectIdentifier']
     property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:User ON CREATE SET n:User SET n += prop.map'
     props = {'map': user['Properties'], 'source': identifier}
 
-    queries.append(Query(property_query, props))
+    tx.run(property_query, props=props)
 
     if 'PrimaryGroupSid' in user and user['PrimaryGroupSid']:
         query = build_add_edge_query('User', 'Group', 'MemberOf', '{isacl: false}')
-        queries.append(Query(query, dict(source=identifier, target=user['PrimaryGroupSid'])))
+        tx.run(query, props=dict(source=identifier, target=user['PrimaryGroupSid']))
 
-    if 'AllowedToDelegate' in  user and user['AllowedToDelegate']:
+    if 'AllowedToDelegate' in user and user['AllowedToDelegate']:
         query = build_add_edge_query('User', 'Computer', 'AllowedToDelegate', '{isacl: false}')
         for entry in user['AllowedToDelegate']:
-            queries.append(Query(query, dict(source=identifier, target=entry)))
+            tx.run(query, props=dict(source=identifier, target=entry))
 
     # TODO add HasSIDHistory objects
 
     if 'Aces' in user and user['Aces'] is not None:
-        queries.extend(process_ace_list(user['Aces'], identifier, "User"))
-
-    for entry in queries:
-        tx.run(entry.query, props=entry.properties)
+        process_ace_list(user['Aces'], identifier, "User", tx)
 
 
-def parse_group(tx, group):
+def parse_group(tx: neo4j.Transaction, group: dict):
     """Parse a group object.
 
     Arguments:
-        tx {neo4j.Session} -- Neo4j session
+        tx {neo4j.Transaction} -- Neo4j Transaction
         group {dict} -- Single group object from the bloodhound json.
     """
-    queries = []
     properties = group['Properties']
     identifier = group['ObjectIdentifier']
-    aces = group['Aces']
     members = group['Members']
 
     property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:Group ON CREATE SET n:Group SET n += prop.map'
     props = {'map': properties, 'source': identifier}
-
-    queries.append(Query(property_query, props))
+    tx.run(property_query, props=props)
 
     if 'Aces' in group and group['Aces'] is not None:
-        queries.extend(process_ace_list(group['Aces'], identifier, "Group"))
+        process_ace_list(group['Aces'], identifier, "Group", tx)
 
     for member in members:
         query = build_add_edge_query(member['MemberType'], 'Group', 'MemberOf', '{isacl: false}')
-        queries.append(Query(query, dict(source=member['MemberId'], target=identifier)))
-
-    for entry in queries:
-        tx.run(entry.query, props=entry.properties)
+        tx.run(query, props=dict(source=member['MemberId'], target=identifier))
 
 
-def parse_domain(tx, domain):
+def parse_domain(tx: neo4j.Transaction, domain: dict):
     """Parse a domain object.
 
     Arguments:
-        tx {neo4j.Session} -- Neo4j session
+        tx {neo4j.Transaction} -- Neo4j Transaction
         domain {dict} -- Single domain object from the bloodhound json.
     """
-    queries = []
     identifier = domain['ObjectIdentifier']
     property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:Domain ON CREATE SET n:Domain SET n += prop.map'
     props = {'map': domain['Properties'], 'source': identifier}
-    queries.append(Query(property_query, props))
+    tx.run(property_query, props=props)
 
     if 'Aces' in domain and domain['Aces'] is not None:
-        queries.extend(process_ace_list(domain['Aces'], identifier, 'Domain'))
+        process_ace_list(domain['Aces'], identifier, 'Domain', tx)
 
     trust_map = {0: 'ParentChild', 1: 'CrossLink', 2: 'Forest', 3: 'External', 4: 'Unknown'}
     if 'Trusts' in domain and domain['Trusts'] is not None:
@@ -340,7 +291,7 @@ def parse_domain(tx, domain):
             else:
                 logging.error("Could not determine direction of trust... direction: %s", direction)
                 continue
-            queries.append(Query(query, props))
+            tx.run(query, props=props)
 
     options = [
         ('Users', 'User', 'Contains'),
@@ -353,13 +304,15 @@ def parse_domain(tx, domain):
             targets = domain[option]
             for target in targets:
                 query = build_add_edge_query('OU', member_type, edge_name, '{isacl: false}')
-                queries.append(Query(query, dict(source=identifier, target=target)))
+                tx.run(query, props=dict(source=identifier, target=target))
 
     if 'Links' in domain and domain['Links']:
         query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
         for gpo in domain['Links']:
-            queries.append(
-                Query(query, dict(source=identifier, target=gpo['Guid'].upper(), enforced=gpo['IsEnforced'])))
+            tx.run(
+                query,
+                props=dict(source=identifier, target=gpo['Guid'].upper(), enforced=gpo['IsEnforced'])
+            )
 
     options = [
         ('LocalAdmins', 'AdminTo'),
@@ -375,26 +328,10 @@ def parse_domain(tx, domain):
                 query = build_add_edge_query(target['MemberType'], 'Computer', edge_name,
                                              '{isacl: false, fromgpo: true}')
                 for computer in domain['Computers']:
-                    queries.append(Query(query, dict(target=computer, source=target['MemberId'])))
-
-    for entry in queries:
-        tx.run(entry.query, props=entry.properties)
+                    tx.run(query, props=dict(target=computer, source=target['MemberId']))
 
 
-def chunks(l, n):
-    """Creates chunks from a list.
-    From: https://stackoverflow.com/a/312464
-
-    Arguments:
-        l {list} -- List to chunk
-        n {int} -- Size of the chunks.
-    """
-
-    for i in range(0, len(l), n):
-        yield l[i:i + n]
-
-
-def parse_file(filename, driver):
+def parse_file(filename: str, driver: neo4j.GraphDatabase):
     """Parse a bloodhound file.
 
     Arguments:
@@ -404,10 +341,10 @@ def parse_file(filename, driver):
     logging.info("Parsing bloodhound file: %s", filename)
 
     with codecs.open(filename, 'r', encoding='utf-8-sig') as f:
-        data = json.load(f)
-
-    obj_type = data['meta']['type']
-    total = data['meta']['count']
+        meta = ijson.items(f, 'meta')
+        for o in meta:
+            obj_type = o['type']
+            total = o['count']
 
     parsing_map = {
         'computers': parse_computer,
@@ -418,10 +355,6 @@ def parse_file(filename, driver):
         'ous': parse_ou
     }
 
-    # Split the data into chunks, fixing some bugs with memory usage.
-    data_chunks = chunks(data[obj_type], 1000)
-    count = 0
-
     parse_function = None
     try:
         parse_function = parsing_map[obj_type]
@@ -429,13 +362,19 @@ def parse_file(filename, driver):
         logging.error("Parsing function for object type: %s was not found.", obj_type)
         return
 
-    for chunk in data_chunks:
-        # Create a new session per chunk.
-        with driver.session() as session:
-            for entry in chunk:
-                count += 1
+    ten_percent = total // 10 if total > 10 else 1
+    count = 0
+    f = codecs.open(filename, 'r', encoding='utf-8-sig')
+    objs = ijson.items(f, '.'.join([obj_type, 'item']))
+    with driver.session() as session:
+        for entry in objs:
+            try:
                 session.write_transaction(parse_function, entry)
+                count = count + 1
+            except neo4j.exceptions.ConstraintError as e:
+                print(e)
+            if count % ten_percent == 0:
+                logging.info("Parsed %d out of %d records in %s.", count, total, filename)
 
-        logging.debug("%s/%s", count, total)
-
+    f.close()
     logging.info("Completed file: %s", filename)

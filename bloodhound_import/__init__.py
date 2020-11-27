@@ -4,6 +4,7 @@ from bloodhound_import import database
 from bloodhound_import.importer import parse_file, add_constraints
 from neo4j.exceptions import ClientError
 
+
 def main():
     """
         Main function
@@ -46,6 +47,7 @@ def main():
         logging.info("Done")
     finally:
         driver.close()
+
 
 if __name__ == "__main__":
     main()

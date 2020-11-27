@@ -2,16 +2,17 @@
 Code borrowed from
 https://github.com/fox-it/aclpwn.py/blob/master/aclpwn/database.py
 """
-from __future__ import unicode_literals, print_function
 from neo4j import GraphDatabase
 import platform
 import json
 import os
 
+
 def init_driver(ip, port, user, password):
     uri = "bolt://{}:{}".format(ip, port)
     driver = GraphDatabase.driver(uri, auth=(user, password))
     return driver
+
 
 def detect_db_config():
     """
@@ -68,4 +69,3 @@ def detect_db_config():
     except KeyError:
         password = None
     return username, password
-
