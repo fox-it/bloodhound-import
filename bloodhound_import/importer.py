@@ -227,7 +227,7 @@ def parse_computer(tx, computer):
     if 'Sessions' in computer and computer['Sessions']:
         query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false}')
         for entry in computer['Sessions']:
-            queries.append(Query(query, dict(source=entry['MemberId'], target=identifier)))
+            queries.append(Query(query, dict(source=entry['UserId'], target=identifier)))
 
     if 'Aces' in computer and computer['Aces'] is not None:
         queries.extend(process_ace_list(computer['Aces'], identifier, "Computer"))
