@@ -62,7 +62,7 @@ def process_ace_list(ace_list: list, objectid: str, objecttype: str, tx: neo4j.T
             rights.append(RIGHTS_MAP[right])
 
         for right in rights:
-            query = build_add_edge_query(objecttype, principaltype, right, '{isacl: true, isinherited: prop.isinherited}')
+            query = build_add_edge_query(principaltype, objecttype, right, '{isacl: true, isinherited: prop.isinherited}')
             props = dict(
                 source=principal,
                 target=objectid,
@@ -193,6 +193,7 @@ def parse_computer(tx: neo4j.Transaction, computer: dict):
         query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false}')
         for entry in computer['Sessions']:
             tx.run(query, props=dict(source=entry['UserId'], target=identifier))
+
 
     if 'Aces' in computer and computer['Aces'] is not None:
         process_ace_list(computer['Aces'], identifier, "Computer", tx)
