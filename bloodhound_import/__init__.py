@@ -15,6 +15,7 @@ def main():
     argparser.add_argument("-dp", "--database-password", help="Password to connect to neo4j, if not specified will try to auto detect a config file.")
     argparser.add_argument("--database", help="The host neo4j is running on.", default="localhost")
     argparser.add_argument("-p", "--port", help="Port of neo4j", default=7687)
+    argparser.add_argument("-s", "--scheme", help="URI Scheme used to communicate with neo4j", default="bolt")
     argparser.add_argument("-v", "--verbose", help="Verbose output", action='store_true')
     arguments = argparser.parse_args()
 
@@ -30,7 +31,7 @@ def main():
     else:
         logging.getLogger().setLevel(logging.INFO)
 
-    driver = database.init_driver(arguments.database, arguments.port, arguments.database_user, arguments.database_password)
+    driver = database.init_driver(arguments.database, arguments.port, arguments.scheme, arguments.database_user, arguments.database_password)
 
     try:
         try:
