@@ -8,8 +8,8 @@ import json
 import os
 
 
-def init_driver(ip, port, user, password):
-    uri = "bolt://{}:{}".format(ip, port)
+def init_driver(ip, port, scheme, user, password):
+    uri = "{}://{}:{}".format(scheme, ip, port)
     driver = GraphDatabase.driver(uri, auth=(user, password))
     return driver
 
