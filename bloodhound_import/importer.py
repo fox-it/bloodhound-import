@@ -30,7 +30,8 @@ RIGHTS_MAP = {
     "WriteOwner": "WriteOwner",
     "GenericWrite": "GenericWrite",
     "Owner": "Owns",
-    "ReadLAPSPassword": "ReadLAPSPassword"
+    "ReadLAPSPassword": "ReadLAPSPassword",
+    "ReadGMSAPassword": "ReadGMSAPassword"
 }
 
 SYNC_COUNT = 100
