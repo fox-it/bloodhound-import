@@ -78,6 +78,11 @@ def add_constraints(tx: neo4j.Transaction):
     Arguments:
         tx {neo4j.Transaction} -- Neo4j transaction.
     """
+    tx.run('CREATE CONSTRAINT base_objectid_unique ON (b:Base) ASSERT b.objectid IS UNIQUE')
+    tx.run('CREATE CONSTRAINT computer_objectid_unique ON (c:Computer) ASSERT c.objectid IS UNIQUE')
+    tx.run('CREATE CONSTRAINT domain_objectid_unique ON (d:Domain) ASSERT d.objectid IS UNIQUE')
+    tx.run('CREATE CONSTRAINT group_objectid_unique ON (g:Group) ASSERT g.objectid IS UNIQUE')
+    tx.run('CREATE CONSTRAINT user_objectid_unique ON (u:User) ASSERT u.objectid IS UNIQUE')
     tx.run("CREATE CONSTRAINT ON (c:User) ASSERT c.name IS UNIQUE")
     tx.run("CREATE CONSTRAINT ON (c:Computer) ASSERT c.name IS UNIQUE")
     tx.run("CREATE CONSTRAINT ON (c:Group) ASSERT c.name IS UNIQUE")
