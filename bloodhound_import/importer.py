@@ -151,6 +151,7 @@ def parse_computer(tx: neo4j.Transaction, computer: dict):
         for entry in computer['AllowedToDelegate']:
             tx.run(query, props=dict(source=identifier, target=entry))
 
+    # (Property name, Edge name, Use "Results" format)
     options = [
         ('LocalAdmins', 'AdminTo', True),
         ('RemoteDesktopUsers', 'CanRDP', True),
