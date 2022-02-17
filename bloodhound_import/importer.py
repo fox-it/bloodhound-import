@@ -168,11 +168,18 @@ def parse_computer(tx: neo4j.Transaction, computer: dict):
                 query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl:false, fromgpo: false}')
                 tx.run(query, props=dict(source=target['ObjectIdentifier'], target=identifier))
 
-    if 'Sessions' in computer and computer['Sessions']['Results']:
-        query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false}')
-        for entry in computer['Sessions']['Results']:
-            tx.run(query, props=dict(source=entry['UserId'], target=identifier))
+    # (Session type, source)
+    session_types = [
+        ('Sessions', 'netsessionenum'),
+        ('PrivilegedSessions', 'netwkstauserenum'),
+        ('RegistrySessions', 'registry'),
+    ]
 
+    for session_type, source in session_types:
+        if session_types in computer and computer[session_types]['Results']:
+            query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false, source:"%s"}' % source)
+            for entry in computer[session_types]['Results']:
+                tx.run(query, props=dict(source=entry['UserId'], target=identifier))
 
     if 'Aces' in computer and computer['Aces'] is not None:
         process_ace_list(computer['Aces'], identifier, "Computer", tx)
