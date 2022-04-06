@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "03f8bf2173b023c2ab490dba5c1a349fbc60fb2d42fa88dff8fab5302b1248fc"
+            "sha256": "c76b7bd6b1a2a8bc952c0fd85c6d9535f59269432755bb16e5c76efa3cf115e9"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -16,6 +16,16 @@
         ]
     },
     "default": {
+        "asyncio": {
+            "hashes": [
+                "sha256:83360ff8bc97980e4ff25c964c7bd3923d333d177aa4f7fb736b019f26c7cb41",
+                "sha256:b62c9157d36187eca799c378e572c969f0da87cd5fc42ca372d92cdb06e7e1de",
+                "sha256:c46a87b48213d7464f22d9a497b9eef8c1928b68320a2fa94240f969f6fec08c",
+                "sha256:c4d18b22701821de07bd6aea8b53d21449ec0ec5680645e5317062ea21817d2d"
+            ],
+            "index": "pypi",
+            "version": "==3.4.3"
+        },
         "ijson": {
             "hashes": [
                 "sha256:068c692efba9692406b86736dcc6803e4a0b6280d7f0b7534bff3faec677ff38",
@@ -86,10 +96,10 @@
         },
         "neo4j-driver": {
             "hashes": [
-                "sha256:f2da741683e8205e0c3d65a1c7bd4ebb8b391c9ad8618d3e166dafb2a70ddf20"
+                "sha256:50a6ccab74bb2c1ffacc77d8d12fd609fe784b2c9c3a0214f2cd7738e859e956"
             ],
             "index": "pypi",
-            "version": "==4.4.2"
+            "version": "==5.0.0a1"
         },
         "pytz": {
             "hashes": [

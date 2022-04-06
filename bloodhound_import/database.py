@@ -2,7 +2,7 @@
 Code borrowed from
 https://github.com/fox-it/aclpwn.py/blob/master/aclpwn/database.py
 """
-from neo4j import GraphDatabase
+from neo4j import AsyncGraphDatabase
 import platform
 import json
 import os
@@ -10,7 +10,7 @@ import os
 
 def init_driver(ip, port, scheme, user, password):
     uri = "{}://{}:{}".format(scheme, ip, port)
-    driver = GraphDatabase.driver(uri, auth=(user, password))
+    driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
     return driver
 
 

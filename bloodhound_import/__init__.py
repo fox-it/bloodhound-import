@@ -5,7 +5,7 @@ from bloodhound_import.importer import parse_file, add_constraints
 from neo4j.exceptions import ClientError
 
 
-def main():
+async def main():
     """
         Main function
     """
@@ -35,19 +35,19 @@ def main():
 
     try:
         try:
-            with driver.session() as session:
+            async with driver.session() as session:
                 logging.debug("Adding constraints to the neo4j database")
-                session.write_transaction(add_constraints)
+                await session.write_transaction(add_constraints)
         except ClientError:
             pass
 
         logging.info("Parsing %s files", len(arguments.files))
         for filename in arguments.files:
-            parse_file(filename, driver)
+            await parse_file(filename, driver)
 
         logging.info("Done")
     finally:
-        driver.close()
+        await driver.close()
 
 
 if __name__ == "__main__":
