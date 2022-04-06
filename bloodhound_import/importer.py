@@ -16,24 +16,6 @@ class Query:
     properties: dict
 
 
-ACETYPE_MAP = {
-    "All": "AllExtendedRights",
-    "User-Force-Change-Password": "ForceChangePassword",
-    "Member": "AddMember",
-    "AddMember": "AddMember",
-    "AllowedToAct": "AddAllowedToAct",
-}
-
-RIGHTS_MAP = {
-    "GenericAll": "GenericAll",
-    "WriteDacl": "WriteDacl",
-    "WriteOwner": "WriteOwner",
-    "GenericWrite": "GenericWrite",
-    "Owner": "Owns",
-    "ReadLAPSPassword": "ReadLAPSPassword",
-    "ReadGMSAPassword": "ReadGMSAPassword"
-}
-
 SYNC_COUNT = 100
 
 
@@ -48,28 +30,17 @@ def process_ace_list(ace_list: list, objectid: str, objecttype: str, tx: neo4j.T
         principal = entry['PrincipalSID']
         principaltype = entry['PrincipalType']
         right = entry['RightName']
-        acetype = entry['AceType']
 
         if objectid == principal:
             continue
 
-        rights = []
-        if acetype in ACETYPE_MAP:
-            rights.append(ACETYPE_MAP[acetype])
-        elif right == "ExtendedRight":
-            rights.append(acetype)
-
-        if right in RIGHTS_MAP:
-            rights.append(RIGHTS_MAP[right])
-
-        for right in rights:
-            query = build_add_edge_query(principaltype, objecttype, right, '{isacl: true, isinherited: prop.isinherited}')
-            props = dict(
-                source=principal,
-                target=objectid,
-                isinherited=entry['IsInherited'],
-            )
-            tx.run(query, props=props)
+        query = build_add_edge_query(principaltype, objecttype, right, '{isacl: true, isinherited: prop.isinherited}')
+        props = dict(
+            source=principal,
+            target=objectid,
+            isinherited=entry['IsInherited'],
+        )
+        tx.run(query, props=props)
 
 
 def add_constraints(tx: neo4j.Transaction):
@@ -89,6 +60,13 @@ def add_constraints(tx: neo4j.Transaction):
     tx.run("CREATE CONSTRAINT ON (c:Domain) ASSERT c.name IS UNIQUE")
     tx.run("CREATE CONSTRAINT ON (c:OU) ASSERT c.guid IS UNIQUE")
     tx.run("CREATE CONSTRAINT ON (c:GPO) ASSERT c.name IS UNIQUE")
+    tx.run("CREATE INDEX ON :User(objectid)")
+    tx.run("CREATE INDEX ON :Group(objectid)")
+    tx.run("CREATE INDEX ON :Computer(objectid)")
+    tx.run("CREATE INDEX ON :Container(objectid)")
+    tx.run("CREATE INDEX ON :GPO(objectid)")
+    tx.run("CREATE INDEX ON :Domain(objectid)")
+    tx.run("CREATE INDEX ON :OU(objectid")
 
 
 def parse_ou(tx: neo4j.Transaction, ou: dict):
@@ -122,7 +100,7 @@ def parse_ou(tx: neo4j.Transaction, ou: dict):
     if 'Links' in ou and ou['Links']:
         query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
         for gpo in ou['Links']:
-            tx.run(query, props=dict(source=identifier, target=gpo['Guid'].upper(), enforced=gpo['IsEnforced']))
+            tx.run(query, props=dict(source=identifier, target=gpo['GUID'].upper(), enforced=gpo['IsEnforced']))
 
     options = [
         ('LocalAdmins', 'AdminTo'),
@@ -135,9 +113,9 @@ def parse_ou(tx: neo4j.Transaction, ou: dict):
         if option in ou and ou[option]:
             targets = ou[option]
             for target in targets:
-                query = build_add_edge_query(target['MemberType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
+                query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
                 for computer in ou['Computers']:
-                    tx.run(query, props=dict(target=computer, source=target['MemberId']))
+                    tx.run(query, props=dict(target=computer, source=target['ObjectIdentifier']))
 
 
 def parse_gpo(tx: neo4j.Transaction, gpo: dict):
@@ -178,28 +156,37 @@ def parse_computer(tx: neo4j.Transaction, computer: dict):
     if 'AllowedToDelegate' in computer and computer['AllowedToDelegate']:
         query = build_add_edge_query('Computer', 'Group', 'MemberOf', '{isacl:false}')
         for entry in computer['AllowedToDelegate']:
-            tx.run(query, props=dict(source=identifier, target=entry))
+            tx.run(query, props=dict(source=identifier, target=entry['ObjectIdentifier']))
 
+    # (Property name, Edge name, Use "Results" format)
     options = [
-        ('AllowedToAct', 'AllowedToAct'),
-        ('LocalAdmins', 'AdminTo'),
-        ('RemoteDesktopUsers', 'CanRDP'),
-        ('DcomUsers', 'ExecuteDCOM'),
-        ('PSRemoteUsers', 'CanPSRemote')
+        ('LocalAdmins', 'AdminTo', True),
+        ('RemoteDesktopUsers', 'CanRDP', True),
+        ('DcomUsers', 'ExecuteDCOM', True),
+        ('PSRemoteUsers', 'CanPSRemote', True),
+        ('AllowedToAct', 'AllowedToAct', False),
+        ('AllowedToDelegate', 'AllowedToDelegate', False),
     ]
 
-    for option, edge_name in options:
-        if option in computer and computer[option]:
-            targets = computer[option]
+    for option, edge_name, use_results in options:
+        if option in computer:
+            targets = computer[option]['Results'] if use_results else computer[option]
             for target in targets:
-                query = build_add_edge_query(target['MemberType'], 'Computer', edge_name, '{isacl:false, fromgpo: false}')
-                tx.run(query, props=dict(source=target['MemberId'], target=identifier))
+                query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl:false, fromgpo: false}')
+                tx.run(query, props=dict(source=target['ObjectIdentifier'], target=identifier))
 
-    if 'Sessions' in computer and computer['Sessions']:
-        query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false}')
-        for entry in computer['Sessions']:
-            tx.run(query, props=dict(source=entry['UserId'], target=identifier))
+    # (Session type, source)
+    session_types = [
+        ('Sessions', 'netsessionenum'),
+        ('PrivilegedSessions', 'netwkstauserenum'),
+        ('RegistrySessions', 'registry'),
+    ]
 
+    for session_type, source in session_types:
+        if session_type in computer and computer[session_type]['Results']:
+            query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false, source:"%s"}' % source)
+            for entry in computer[session_type]['Results']:
+                tx.run(query, props=dict(source=entry['UserSID'], target=identifier))
 
     if 'Aces' in computer and computer['Aces'] is not None:
         process_ace_list(computer['Aces'], identifier, "Computer", tx)
@@ -225,7 +212,7 @@ def parse_user(tx: neo4j.Transaction, user: dict):
     if 'AllowedToDelegate' in user and user['AllowedToDelegate']:
         query = build_add_edge_query('User', 'Computer', 'AllowedToDelegate', '{isacl: false}')
         for entry in user['AllowedToDelegate']:
-            tx.run(query, props=dict(source=identifier, target=entry))
+            tx.run(query, props=dict(source=identifier, target=entry['ObjectIdentifier']))
 
     # TODO add HasSIDHistory objects
 
@@ -252,8 +239,8 @@ def parse_group(tx: neo4j.Transaction, group: dict):
         process_ace_list(group['Aces'], identifier, "Group", tx)
 
     for member in members:
-        query = build_add_edge_query(member['MemberType'], 'Group', 'MemberOf', '{isacl: false}')
-        tx.run(query, props=dict(source=member['MemberId'], target=identifier))
+        query = build_add_edge_query(member['ObjectType'], 'Group', 'MemberOf', '{isacl: false}')
+        tx.run(query, props=dict(source=member['ObjectIdentifier'], target=identifier))
 
 
 def parse_domain(tx: neo4j.Transaction, domain: dict):
@@ -317,7 +304,7 @@ def parse_domain(tx: neo4j.Transaction, domain: dict):
         for gpo in domain['Links']:
             tx.run(
                 query,
-                props=dict(source=identifier, target=gpo['Guid'].upper(), enforced=gpo['IsEnforced'])
+                props=dict(source=identifier, target=gpo['GUID'].upper(), enforced=gpo['IsEnforced'])
             )
 
     options = [
@@ -331,10 +318,10 @@ def parse_domain(tx: neo4j.Transaction, domain: dict):
         if option in domain and domain[option]:
             targets = domain[option]
             for target in targets:
-                query = build_add_edge_query(target['MemberType'], 'Computer', edge_name,
+                query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name,
                                              '{isacl: false, fromgpo: true}')
                 for computer in domain['Computers']:
-                    tx.run(query, props=dict(target=computer, source=target['MemberId']))
+                    tx.run(query, props=dict(target=computer, source=target['ObjectIdentifier']))
 
 
 def parse_file(filename: str, driver: neo4j.GraphDatabase):
@@ -371,7 +358,7 @@ def parse_file(filename: str, driver: neo4j.GraphDatabase):
     ten_percent = total // 10 if total > 10 else 1
     count = 0
     f = codecs.open(filename, 'r', encoding='utf-8-sig')
-    objs = ijson.items(f, '.'.join([obj_type, 'item']))
+    objs = ijson.items(f, 'data.item')
     with driver.session() as session:
         for entry in objs:
             try:
