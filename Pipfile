@@ -1,0 +1,13 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+neo4j-driver = "==4.4.2"
+ijson = "==3.1.4"
+
+[requires]
+python_version = "3.8"
+
+[dev-packages]
