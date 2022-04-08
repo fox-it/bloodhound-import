@@ -43,6 +43,17 @@ async def process_ace_list(ace_list: list, objectid: str, objecttype: str, tx: n
         await tx.run(query, props=props)
 
 
+async def process_spntarget_list(spntarget_list: list, objectid: str, tx: neo4j.Transaction) -> None:
+    for entry in spntarget_list:
+        query = build_add_edge_query('User', 'Computer', '', '{isacl: false, port: prop.port}')
+        props = dict(
+            source=objectid,
+            target=entry['ComputerSID'],
+            port=entry['Port'],
+        )
+        await tx.run(query, props=props)
+
+
 async def add_constraints(tx: neo4j.Transaction):
     """Adds bloodhound contraints to neo4j
 
@@ -209,6 +220,9 @@ async def parse_user(tx: neo4j.Transaction, user: dict):
 
     if 'Aces' in user and user['Aces'] is not None:
         await process_ace_list(user['Aces'], identifier, "User", tx)
+
+    if 'SPNTargets' in user and user['SPNTargets'] is not None:
+        await process_spntarget_list(user['SPNTargets'], identifier, tx)
 
 
 async def parse_group(tx: neo4j.Transaction, group: dict):
