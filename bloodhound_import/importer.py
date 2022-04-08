@@ -307,6 +307,27 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
                 for computer in domain['Computers']:
                     await tx.run(query, props=dict(target=computer, source=target['ObjectIdentifier']))
 
+async def parse_container(tx: neo4j.Transaction, container: dict):
+    """Parse a Container object.
+
+    Arguments:
+        tx {neo4j.Transaction} -- Neo4j session
+        container {dict} -- Single container object from the bloodhound json.
+    """
+    identifier = container['ObjectIdentifier']
+    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) SET n:Container SET n += prop.map'
+    props = {'map': container['Properties'], 'source': identifier}
+
+    await tx.run(property_query, props=props)
+
+    if 'Aces' in container and container['Aces'] is not None:
+        await process_ace_list(container['Aces'], identifier, "Container", tx)
+
+    if 'ChildObjects' in container and container['ChildObjects']:
+        targets = container['ChildObjects']
+        for target in targets:
+            query = build_add_edge_query('Container', target['ObjectType'], 'Contains', '{isacl: false}')
+            await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
 async def parse_file(filename: str, driver: neo4j.GraphDatabase):
     """Parse a bloodhound file.
@@ -325,6 +346,7 @@ async def parse_file(filename: str, driver: neo4j.GraphDatabase):
 
     parsing_map = {
         'computers': parse_computer,
+        'containers': parse_container,
         'users': parse_user,
         'groups': parse_group,
         'domains': parse_domain,
