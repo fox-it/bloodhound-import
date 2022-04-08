@@ -82,18 +82,11 @@ async def parse_ou(tx: neo4j.Transaction, ou: dict):
     if 'Aces' in ou and ou['Aces'] is not None:
         await process_ace_list(ou['Aces'], identifier, "OU", tx)
 
-    options = [
-        ('Users', 'User', 'Contains'),
-        ('Computers', 'Computer', 'Contains'),
-        ('ChildOus', 'OU', 'Contains'),
-    ]
-
-    for option, member_type, edge_name in options:
-        if option in ou and ou[option]:
-            targets = ou[option]
-            for target in targets:
-                query = build_add_edge_query('OU', member_type, edge_name, '{isacl: false}')
-                await tx.run(query, props=dict(source=identifier, target=target))
+    if 'ChildObjects' in ou and ou['ChildObjects']:
+        targets = ou['ChildObjects']
+        for target in targets:
+            query = build_add_edge_query('OU', target['ObjectType'], 'Contains', '{isacl: false}')
+            await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
     if 'Links' in ou and ou['Links']:
         query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
@@ -284,18 +277,11 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
                 continue
             await tx.run(query, props=props)
 
-    options = [
-        ('Users', 'User', 'Contains'),
-        ('Computers', 'Computer', 'Contains'),
-        ('ChildOus', 'OU', 'Contains'),
-    ]
-
-    for option, member_type, edge_name in options:
-        if option in domain and domain[option]:
-            targets = domain[option]
-            for target in targets:
-                query = build_add_edge_query('OU', member_type, edge_name, '{isacl: false}')
-                await tx.run(query, props=dict(source=identifier, target=target))
+    if 'ChildObjects' in domain and domain['ChildObjects']:
+        targets = domain['ChildObjects']
+        for target in targets:
+            query = build_add_edge_query('Domain', target['ObjectType'], 'Contains', '{isacl: false}')
+            await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
     if 'Links' in domain and domain['Links']:
         query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
