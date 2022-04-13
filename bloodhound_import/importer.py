@@ -60,22 +60,17 @@ async def add_constraints(tx: neo4j.Transaction):
     Arguments:
         tx {neo4j.Transaction} -- Neo4j transaction.
     """
-    await tx.run("CREATE INDEX ON :User(objectid)")
-    await tx.run("CREATE INDEX ON :Group(objectid)")
-    await tx.run("CREATE INDEX ON :Computer(objectid)")
-    await tx.run("CREATE INDEX ON :Container(objectid)")
-    await tx.run("CREATE INDEX ON :GPO(objectid)")
-    await tx.run("CREATE INDEX ON :Domain(objectid)")
-    await tx.run("CREATE INDEX ON :OU(objectid)")
-    await tx.run("CREATE INDEX ON :Base(objectid)")
-    await tx.run("CREATE INDEX ON :User(name)")
-    await tx.run("CREATE INDEX ON :Group(name)")
-    await tx.run("CREATE INDEX ON :Computer(name)")
-    await tx.run("CREATE INDEX ON :Container(name)")
-    await tx.run("CREATE INDEX ON :GPO(name)")
-    await tx.run("CREATE INDEX ON :Domain(name)")
-    await tx.run("CREATE INDEX ON :OU(name)")
-    await tx.run("CREATE INDEX ON :Base(name)")
+    await tx.run('CREATE CONSTRAINT base_objectid_unique ON (b:Base) ASSERT b.objectid IS UNIQUE')
+    await tx.run('CREATE CONSTRAINT computer_objectid_unique ON (c:Computer) ASSERT c.objectid IS UNIQUE')
+    await tx.run('CREATE CONSTRAINT domain_objectid_unique ON (d:Domain) ASSERT d.objectid IS UNIQUE')
+    await tx.run('CREATE CONSTRAINT group_objectid_unique ON (g:Group) ASSERT g.objectid IS UNIQUE')
+    await tx.run('CREATE CONSTRAINT user_objectid_unique ON (u:User) ASSERT u.objectid IS UNIQUE')
+    await tx.run("CREATE CONSTRAINT ON (c:User) ASSERT c.name IS UNIQUE")
+    await tx.run("CREATE CONSTRAINT ON (c:Computer) ASSERT c.name IS UNIQUE")
+    await tx.run("CREATE CONSTRAINT ON (c:Group) ASSERT c.name IS UNIQUE")
+    await tx.run("CREATE CONSTRAINT ON (c:Domain) ASSERT c.name IS UNIQUE")
+    await tx.run("CREATE CONSTRAINT ON (c:OU) ASSERT c.guid IS UNIQUE")
+    await tx.run("CREATE CONSTRAINT ON (c:GPO) ASSERT c.name IS UNIQUE")
 
 
 async def parse_ou(tx: neo4j.Transaction, ou: dict):
