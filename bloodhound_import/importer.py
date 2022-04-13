@@ -111,13 +111,16 @@ async def parse_ou(tx: neo4j.Transaction, ou: dict):
         ('RemoteDesktopUsers', 'CanRDP'),
     ]
 
-    for option, edge_name in options:
-        if option in ou and ou[option]:
-            targets = ou[option]
-            for target in targets:
-                query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
-                for computer in ou['Computers']:
-                    await tx.run(query, props=dict(target=computer, source=target['ObjectIdentifier']))
+    if 'GPOChanges' in ou and ou['GPOChanges']:
+        gpo_changes = ou['GPOChanges']
+        affected_computers = gpo_changes['AffectedComputers']
+        for option, edge_name in options:
+            if option in gpo_changes and gpo_changes[option]:
+                targets = gpo_changes[option]
+                for target in targets:
+                    query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
+                    for computer in affected_computers:
+                        await tx.run(query, props=dict(target=computer, source=target['ObjectIdentifier']))
 
 
 async def parse_gpo(tx: neo4j.Transaction, gpo: dict):
@@ -312,14 +315,16 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
         ('RemoteDesktopUsers', 'CanRDP'),
     ]
 
-    for option, edge_name in options:
-        if option in domain and domain[option]:
-            targets = domain[option]
-            for target in targets:
-                query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name,
-                                             '{isacl: false, fromgpo: true}')
-                for computer in domain['Computers']:
-                    await tx.run(query, props=dict(target=computer, source=target['ObjectIdentifier']))
+    if 'GPOChanges' in domain and domain['GPOChanges']:
+        gpo_changes = domain['GPOChanges']
+        affected_computers = gpo_changes['AffectedComputers']
+        for option, edge_name in options:
+            if option in gpo_changes and gpo_changes[option]:
+                targets = gpo_changes[option]
+                for target in targets:
+                    query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
+                    for computer in affected_computers:
+                        await tx.run(query, props=dict(target=computer, source=target['ObjectIdentifier']))
 
 async def parse_container(tx: neo4j.Transaction, container: dict):
     """Parse a Container object.
