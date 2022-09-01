@@ -176,9 +176,9 @@ def parse_computer(tx: neo4j.Transaction, computer: dict):
     ]
 
     for session_type, source in session_types:
-        if session_types in computer and computer[session_types]['Results']:
+        if session_type in computer and computer[session_types]['Results']:
             query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false, source:"%s"}' % source)
-            for entry in computer[session_types]['Results']:
+            for entry in computer[session_type]['Results']:
                 tx.run(query, props=dict(source=entry['UserId'], target=identifier))
 
     if 'Aces' in computer and computer['Aces'] is not None:
