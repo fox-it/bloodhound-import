@@ -1,4 +1,4 @@
-
+import asyncio
 from bloodhound_import import main
 
-main()
+asyncio.run(main())

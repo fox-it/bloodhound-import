@@ -3,5 +3,4 @@ dist/
 *.pyc
 *.cache
 __pycache__
-Pipfile*
 *.egg-info/

@@ -16,82 +16,64 @@ class Query:
     properties: dict
 
 
-ACETYPE_MAP = {
-    "All": "AllExtendedRights",
-    "User-Force-Change-Password": "ForceChangePassword",
-    "Member": "AddMember",
-    "AddMember": "AddMember",
-    "AllowedToAct": "AddAllowedToAct",
-}
-
-RIGHTS_MAP = {
-    "GenericAll": "GenericAll",
-    "WriteDacl": "WriteDacl",
-    "WriteOwner": "WriteOwner",
-    "GenericWrite": "GenericWrite",
-    "Owner": "Owns",
-    "ReadLAPSPassword": "ReadLAPSPassword",
-    "ReadGMSAPassword": "ReadGMSAPassword"
-}
-
 SYNC_COUNT = 100
 
 
 def build_add_edge_query(source_label: str, target_label: str, edge_type: str, edge_props: str) -> str:
     """Build a standard edge insert query based on the given params"""
-    insert_query = 'UNWIND $props AS prop MERGE (n:Base {{objectid: prop.source}}) ON MATCH SET n:{0} ON CREATE SET n:{0} MERGE (m:Base {{objectid: prop.target}}) ON MATCH SET m:{1} ON CREATE SET m:{1} MERGE (n)-[r:{2} {3}]->(m)'
+    insert_query = 'UNWIND $props AS prop MERGE (n:Base {{objectid: prop.source}}) SET n:{0} MERGE (m:Base {{objectid: prop.target}}) SET m:{1} MERGE (n)-[r:{2} {3}]->(m)'
     return insert_query.format(source_label, target_label, edge_type, edge_props)
 
 
-def process_ace_list(ace_list: list, objectid: str, objecttype: str, tx: neo4j.Transaction) -> None:
+async def process_ace_list(ace_list: list, objectid: str, objecttype: str, tx: neo4j.Transaction) -> None:
     for entry in ace_list:
         principal = entry['PrincipalSID']
         principaltype = entry['PrincipalType']
         right = entry['RightName']
-        acetype = entry['AceType']
 
         if objectid == principal:
             continue
 
-        rights = []
-        if acetype in ACETYPE_MAP:
-            rights.append(ACETYPE_MAP[acetype])
-        elif right == "ExtendedRight":
-            rights.append(acetype)
-
-        if right in RIGHTS_MAP:
-            rights.append(RIGHTS_MAP[right])
-
-        for right in rights:
-            query = build_add_edge_query(principaltype, objecttype, right, '{isacl: true, isinherited: prop.isinherited}')
-            props = dict(
-                source=principal,
-                target=objectid,
-                isinherited=entry['IsInherited'],
-            )
-            tx.run(query, props=props)
+        query = build_add_edge_query(principaltype, objecttype, right, '{isacl: true, isinherited: prop.isinherited}')
+        props = dict(
+            source=principal,
+            target=objectid,
+            isinherited=entry['IsInherited'],
+        )
+        await tx.run(query, props=props)
 
 
-def add_constraints(tx: neo4j.Transaction):
+async def process_spntarget_list(spntarget_list: list, objectid: str, tx: neo4j.Transaction) -> None:
+    for entry in spntarget_list:
+        query = build_add_edge_query('User', 'Computer', '', '{isacl: false, port: prop.port}')
+        props = dict(
+            source=objectid,
+            target=entry['ComputerSID'],
+            port=entry['Port'],
+        )
+        await tx.run(query, props=props)
+
+
+async def add_constraints(tx: neo4j.Transaction):
     """Adds bloodhound contraints to neo4j
 
     Arguments:
         tx {neo4j.Transaction} -- Neo4j transaction.
     """
-    tx.run('CREATE CONSTRAINT base_objectid_unique ON (b:Base) ASSERT b.objectid IS UNIQUE')
-    tx.run('CREATE CONSTRAINT computer_objectid_unique ON (c:Computer) ASSERT c.objectid IS UNIQUE')
-    tx.run('CREATE CONSTRAINT domain_objectid_unique ON (d:Domain) ASSERT d.objectid IS UNIQUE')
-    tx.run('CREATE CONSTRAINT group_objectid_unique ON (g:Group) ASSERT g.objectid IS UNIQUE')
-    tx.run('CREATE CONSTRAINT user_objectid_unique ON (u:User) ASSERT u.objectid IS UNIQUE')
-    tx.run("CREATE CONSTRAINT ON (c:User) ASSERT c.name IS UNIQUE")
-    tx.run("CREATE CONSTRAINT ON (c:Computer) ASSERT c.name IS UNIQUE")
-    tx.run("CREATE CONSTRAINT ON (c:Group) ASSERT c.name IS UNIQUE")
-    tx.run("CREATE CONSTRAINT ON (c:Domain) ASSERT c.name IS UNIQUE")
-    tx.run("CREATE CONSTRAINT ON (c:OU) ASSERT c.guid IS UNIQUE")
-    tx.run("CREATE CONSTRAINT ON (c:GPO) ASSERT c.name IS UNIQUE")
+    await tx.run('CREATE CONSTRAINT base_objectid_unique ON (b:Base) ASSERT b.objectid IS UNIQUE')
+    await tx.run('CREATE CONSTRAINT computer_objectid_unique ON (c:Computer) ASSERT c.objectid IS UNIQUE')
+    await tx.run('CREATE CONSTRAINT domain_objectid_unique ON (d:Domain) ASSERT d.objectid IS UNIQUE')
+    await tx.run('CREATE CONSTRAINT group_objectid_unique ON (g:Group) ASSERT g.objectid IS UNIQUE')
+    await tx.run('CREATE CONSTRAINT user_objectid_unique ON (u:User) ASSERT u.objectid IS UNIQUE')
+    await tx.run("CREATE CONSTRAINT ON (c:User) ASSERT c.name IS UNIQUE")
+    await tx.run("CREATE CONSTRAINT ON (c:Computer) ASSERT c.name IS UNIQUE")
+    await tx.run("CREATE CONSTRAINT ON (c:Group) ASSERT c.name IS UNIQUE")
+    await tx.run("CREATE CONSTRAINT ON (c:Domain) ASSERT c.name IS UNIQUE")
+    await tx.run("CREATE CONSTRAINT ON (c:OU) ASSERT c.guid IS UNIQUE")
+    await tx.run("CREATE CONSTRAINT ON (c:GPO) ASSERT c.name IS UNIQUE")
 
 
-def parse_ou(tx: neo4j.Transaction, ou: dict):
+async def parse_ou(tx: neo4j.Transaction, ou: dict):
     """Parses a single ou.
 
     Arguments:
@@ -99,30 +81,23 @@ def parse_ou(tx: neo4j.Transaction, ou: dict):
         ou {dict} -- Single ou object.
     """
     identifier = ou['ObjectIdentifier'].upper()
-    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:OU ON CREATE SET n:OU SET n += prop.map'
+    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) SET n:OU SET n += prop.map'
     props = {'map': ou['Properties'], 'source': identifier}
-    tx.run(property_query, props=props)
+    await tx.run(property_query, props=props)
 
     if 'Aces' in ou and ou['Aces'] is not None:
-        process_ace_list(ou['Aces'], identifier, "OU", tx)
+        await process_ace_list(ou['Aces'], identifier, "OU", tx)
 
-    options = [
-        ('Users', 'User', 'Contains'),
-        ('Computers', 'Computer', 'Contains'),
-        ('ChildOus', 'OU', 'Contains'),
-    ]
-
-    for option, member_type, edge_name in options:
-        if option in ou and ou[option]:
-            targets = ou[option]
-            for target in targets:
-                query = build_add_edge_query('OU', member_type, edge_name, '{isacl: false}')
-                tx.run(query, props=dict(source=identifier, target=target))
+    if 'ChildObjects' in ou and ou['ChildObjects']:
+        targets = ou['ChildObjects']
+        for target in targets:
+            query = build_add_edge_query('OU', target['ObjectType'], 'Contains', '{isacl: false}')
+            await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
     if 'Links' in ou and ou['Links']:
         query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
         for gpo in ou['Links']:
-            tx.run(query, props=dict(source=identifier, target=gpo['Guid'].upper(), enforced=gpo['IsEnforced']))
+            await tx.run(query, props=dict(source=identifier, target=gpo['GUID'].upper(), enforced=gpo['IsEnforced']))
 
     options = [
         ('LocalAdmins', 'AdminTo'),
@@ -131,16 +106,19 @@ def parse_ou(tx: neo4j.Transaction, ou: dict):
         ('RemoteDesktopUsers', 'CanRDP'),
     ]
 
-    for option, edge_name in options:
-        if option in ou and ou[option]:
-            targets = ou[option]
-            for target in targets:
-                query = build_add_edge_query(target['MemberType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
-                for computer in ou['Computers']:
-                    tx.run(query, props=dict(target=computer, source=target['MemberId']))
+    if 'GPOChanges' in ou and ou['GPOChanges']:
+        gpo_changes = ou['GPOChanges']
+        affected_computers = gpo_changes['AffectedComputers']
+        for option, edge_name in options:
+            if option in gpo_changes and gpo_changes[option]:
+                targets = gpo_changes[option]
+                for target in targets:
+                    query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
+                    for computer in affected_computers:
+                        await tx.run(query, props=dict(target=computer, source=target['ObjectIdentifier']))
 
 
-def parse_gpo(tx: neo4j.Transaction, gpo: dict):
+async def parse_gpo(tx: neo4j.Transaction, gpo: dict):
     """Parses a single GPO.
 
     Arguments:
@@ -149,15 +127,15 @@ def parse_gpo(tx: neo4j.Transaction, gpo: dict):
     """
     identifier = gpo['ObjectIdentifier']
 
-    query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:GPO ON CREATE SET n:GPO SET n += prop.map'
+    query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) SET n:GPO SET n += prop.map'
     props = {'map': gpo['Properties'], 'source': identifier}
-    tx.run(query, props=props)
+    await tx.run(query, props=props)
 
     if "Aces" in gpo and gpo["Aces"] is not None:
-        process_ace_list(gpo['Aces'], identifier, "GPO", tx)
+        await process_ace_list(gpo['Aces'], identifier, "GPO", tx)
 
 
-def parse_computer(tx: neo4j.Transaction, computer: dict):
+async def parse_computer(tx: neo4j.Transaction, computer: dict):
     """Parse a computer object.
 
     Arguments:
@@ -166,46 +144,55 @@ def parse_computer(tx: neo4j.Transaction, computer: dict):
     """
     identifier = computer['ObjectIdentifier']
 
-    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:Computer ON CREATE SET n:Computer SET n += prop.map'
+    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) SET n:Computer SET n += prop.map'
     props = {'map': computer['Properties'], 'source': identifier}
 
-    tx.run(property_query, props=props)
+    await tx.run(property_query, props=props)
 
     if 'PrimaryGroupSid' in computer and computer['PrimaryGroupSid']:
         query = build_add_edge_query('Computer', 'Group', 'MemberOf', '{isacl:false}')
-        tx.run(query, props=dict(source=identifier, target=computer['PrimaryGroupSid']))
+        await tx.run(query, props=dict(source=identifier, target=computer['PrimaryGroupSid']))
 
     if 'AllowedToDelegate' in computer and computer['AllowedToDelegate']:
         query = build_add_edge_query('Computer', 'Group', 'MemberOf', '{isacl:false}')
         for entry in computer['AllowedToDelegate']:
-            tx.run(query, props=dict(source=identifier, target=entry))
+            await tx.run(query, props=dict(source=identifier, target=entry['ObjectIdentifier']))
 
+    # (Property name, Edge name, Use "Results" format)
     options = [
-        ('AllowedToAct', 'AllowedToAct'),
-        ('LocalAdmins', 'AdminTo'),
-        ('RemoteDesktopUsers', 'CanRDP'),
-        ('DcomUsers', 'ExecuteDCOM'),
-        ('PSRemoteUsers', 'CanPSRemote')
+        ('LocalAdmins', 'AdminTo', True),
+        ('RemoteDesktopUsers', 'CanRDP', True),
+        ('DcomUsers', 'ExecuteDCOM', True),
+        ('PSRemoteUsers', 'CanPSRemote', True),
+        ('AllowedToAct', 'AllowedToAct', False),
+        ('AllowedToDelegate', 'AllowedToDelegate', False),
     ]
 
-    for option, edge_name in options:
-        if option in computer and computer[option]:
-            targets = computer[option]
+    for option, edge_name, use_results in options:
+        if option in computer:
+            targets = computer[option]['Results'] if use_results else computer[option]
             for target in targets:
-                query = build_add_edge_query(target['MemberType'], 'Computer', edge_name, '{isacl:false, fromgpo: false}')
-                tx.run(query, props=dict(source=target['MemberId'], target=identifier))
+                query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl:false, fromgpo: false}')
+                await tx.run(query, props=dict(source=target['ObjectIdentifier'], target=identifier))
 
-    if 'Sessions' in computer and computer['Sessions']:
-        query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false}')
-        for entry in computer['Sessions']:
-            tx.run(query, props=dict(source=entry['UserId'], target=identifier))
+    # (Session type, source)
+    session_types = [
+        ('Sessions', 'netsessionenum'),
+        ('PrivilegedSessions', 'netwkstauserenum'),
+        ('RegistrySessions', 'registry'),
+    ]
 
+    for session_type, source in session_types:
+        if session_type in computer and computer[session_type]['Results']:
+            query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false, source:"%s"}' % source)
+            for entry in computer[session_type]['Results']:
+                await tx.run(query, props=dict(source=entry['UserSID'], target=identifier))
 
     if 'Aces' in computer and computer['Aces'] is not None:
-        process_ace_list(computer['Aces'], identifier, "Computer", tx)
+        await process_ace_list(computer['Aces'], identifier, "Computer", tx)
 
 
-def parse_user(tx: neo4j.Transaction, user: dict):
+async def parse_user(tx: neo4j.Transaction, user: dict):
     """Parse a user object.
 
     Arguments:
@@ -213,27 +200,30 @@ def parse_user(tx: neo4j.Transaction, user: dict):
         user {dict} -- Single user object from the bloodhound json.
     """
     identifier = user['ObjectIdentifier']
-    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:User ON CREATE SET n:User SET n += prop.map'
+    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) SET n:User SET n += prop.map'
     props = {'map': user['Properties'], 'source': identifier}
 
-    tx.run(property_query, props=props)
+    await tx.run(property_query, props=props)
 
     if 'PrimaryGroupSid' in user and user['PrimaryGroupSid']:
         query = build_add_edge_query('User', 'Group', 'MemberOf', '{isacl: false}')
-        tx.run(query, props=dict(source=identifier, target=user['PrimaryGroupSid']))
+        await tx.run(query, props=dict(source=identifier, target=user['PrimaryGroupSid']))
 
     if 'AllowedToDelegate' in user and user['AllowedToDelegate']:
         query = build_add_edge_query('User', 'Computer', 'AllowedToDelegate', '{isacl: false}')
         for entry in user['AllowedToDelegate']:
-            tx.run(query, props=dict(source=identifier, target=entry))
+            await tx.run(query, props=dict(source=identifier, target=entry['ObjectIdentifier']))
 
     # TODO add HasSIDHistory objects
 
     if 'Aces' in user and user['Aces'] is not None:
-        process_ace_list(user['Aces'], identifier, "User", tx)
+        await process_ace_list(user['Aces'], identifier, "User", tx)
+
+    if 'SPNTargets' in user and user['SPNTargets'] is not None:
+        await process_spntarget_list(user['SPNTargets'], identifier, tx)
 
 
-def parse_group(tx: neo4j.Transaction, group: dict):
+async def parse_group(tx: neo4j.Transaction, group: dict):
     """Parse a group object.
 
     Arguments:
@@ -244,19 +234,19 @@ def parse_group(tx: neo4j.Transaction, group: dict):
     identifier = group['ObjectIdentifier']
     members = group['Members']
 
-    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:Group ON CREATE SET n:Group SET n += prop.map'
+    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) SET n:Group SET n += prop.map'
     props = {'map': properties, 'source': identifier}
-    tx.run(property_query, props=props)
+    await tx.run(property_query, props=props)
 
     if 'Aces' in group and group['Aces'] is not None:
-        process_ace_list(group['Aces'], identifier, "Group", tx)
+        await process_ace_list(group['Aces'], identifier, "Group", tx)
 
     for member in members:
-        query = build_add_edge_query(member['MemberType'], 'Group', 'MemberOf', '{isacl: false}')
-        tx.run(query, props=dict(source=member['MemberId'], target=identifier))
+        query = build_add_edge_query(member['ObjectType'], 'Group', 'MemberOf', '{isacl: false}')
+        await tx.run(query, props=dict(source=member['ObjectIdentifier'], target=identifier))
 
 
-def parse_domain(tx: neo4j.Transaction, domain: dict):
+async def parse_domain(tx: neo4j.Transaction, domain: dict):
     """Parse a domain object.
 
     Arguments:
@@ -264,12 +254,12 @@ def parse_domain(tx: neo4j.Transaction, domain: dict):
         domain {dict} -- Single domain object from the bloodhound json.
     """
     identifier = domain['ObjectIdentifier']
-    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) ON MATCH SET n:Domain ON CREATE SET n:Domain SET n += prop.map'
+    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) SET n:Domain SET n += prop.map'
     props = {'map': domain['Properties'], 'source': identifier}
-    tx.run(property_query, props=props)
+    await tx.run(property_query, props=props)
 
     if 'Aces' in domain and domain['Aces'] is not None:
-        process_ace_list(domain['Aces'], identifier, 'Domain', tx)
+        await process_ace_list(domain['Aces'], identifier, 'Domain', tx)
 
     trust_map = {0: 'ParentChild', 1: 'CrossLink', 2: 'Forest', 3: 'External', 4: 'Unknown'}
     if 'Trusts' in domain and domain['Trusts'] is not None:
@@ -297,27 +287,20 @@ def parse_domain(tx: neo4j.Transaction, domain: dict):
             else:
                 logging.error("Could not determine direction of trust... direction: %s", direction)
                 continue
-            tx.run(query, props=props)
+            await tx.run(query, props=props)
 
-    options = [
-        ('Users', 'User', 'Contains'),
-        ('Computers', 'Computer', 'Contains'),
-        ('ChildOus', 'OU', 'Contains'),
-    ]
-
-    for option, member_type, edge_name in options:
-        if option in domain and domain[option]:
-            targets = domain[option]
-            for target in targets:
-                query = build_add_edge_query('OU', member_type, edge_name, '{isacl: false}')
-                tx.run(query, props=dict(source=identifier, target=target))
+    if 'ChildObjects' in domain and domain['ChildObjects']:
+        targets = domain['ChildObjects']
+        for target in targets:
+            query = build_add_edge_query('Domain', target['ObjectType'], 'Contains', '{isacl: false}')
+            await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
     if 'Links' in domain and domain['Links']:
         query = build_add_edge_query('GPO', 'OU', 'GpLink', '{isacl: false, enforced: prop.enforced}')
         for gpo in domain['Links']:
-            tx.run(
+            await tx.run(
                 query,
-                props=dict(source=identifier, target=gpo['Guid'].upper(), enforced=gpo['IsEnforced'])
+                props=dict(source=identifier, target=gpo['GUID'].upper(), enforced=gpo['IsEnforced'])
             )
 
     options = [
@@ -327,17 +310,40 @@ def parse_domain(tx: neo4j.Transaction, domain: dict):
         ('RemoteDesktopUsers', 'CanRDP'),
     ]
 
-    for option, edge_name in options:
-        if option in domain and domain[option]:
-            targets = domain[option]
-            for target in targets:
-                query = build_add_edge_query(target['MemberType'], 'Computer', edge_name,
-                                             '{isacl: false, fromgpo: true}')
-                for computer in domain['Computers']:
-                    tx.run(query, props=dict(target=computer, source=target['MemberId']))
+    if 'GPOChanges' in domain and domain['GPOChanges']:
+        gpo_changes = domain['GPOChanges']
+        affected_computers = gpo_changes['AffectedComputers']
+        for option, edge_name in options:
+            if option in gpo_changes and gpo_changes[option]:
+                targets = gpo_changes[option]
+                for target in targets:
+                    query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
+                    for computer in affected_computers:
+                        await tx.run(query, props=dict(target=computer, source=target['ObjectIdentifier']))
 
+async def parse_container(tx: neo4j.Transaction, container: dict):
+    """Parse a Container object.
 
-def parse_file(filename: str, driver: neo4j.GraphDatabase):
+    Arguments:
+        tx {neo4j.Transaction} -- Neo4j session
+        container {dict} -- Single container object from the bloodhound json.
+    """
+    identifier = container['ObjectIdentifier']
+    property_query = 'UNWIND $props AS prop MERGE (n:Base {objectid: prop.source}) SET n:Container SET n += prop.map'
+    props = {'map': container['Properties'], 'source': identifier}
+
+    await tx.run(property_query, props=props)
+
+    if 'Aces' in container and container['Aces'] is not None:
+        await process_ace_list(container['Aces'], identifier, "Container", tx)
+
+    if 'ChildObjects' in container and container['ChildObjects']:
+        targets = container['ChildObjects']
+        for target in targets:
+            query = build_add_edge_query('Container', target['ObjectType'], 'Contains', '{isacl: false}')
+            await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
+
+async def parse_file(filename: str, driver: neo4j.GraphDatabase):
     """Parse a bloodhound file.
 
     Arguments:
@@ -354,6 +360,7 @@ def parse_file(filename: str, driver: neo4j.GraphDatabase):
 
     parsing_map = {
         'computers': parse_computer,
+        'containers': parse_container,
         'users': parse_user,
         'groups': parse_group,
         'domains': parse_domain,
@@ -371,11 +378,11 @@ def parse_file(filename: str, driver: neo4j.GraphDatabase):
     ten_percent = total // 10 if total > 10 else 1
     count = 0
     f = codecs.open(filename, 'r', encoding='utf-8-sig')
-    objs = ijson.items(f, '.'.join([obj_type, 'item']))
-    with driver.session() as session:
+    objs = ijson.items(f, 'data.item')
+    async with driver.session() as session:
         for entry in objs:
             try:
-                session.write_transaction(parse_function, entry)
+                await session.write_transaction(parse_function, entry)
                 count = count + 1
             except neo4j.exceptions.ConstraintError as e:
                 print(e)
