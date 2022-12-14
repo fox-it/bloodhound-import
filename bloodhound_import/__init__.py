@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import logging
 from bloodhound_import import database
 from bloodhound_import.importer import parse_file, add_constraints
@@ -51,4 +52,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

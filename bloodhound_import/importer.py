@@ -343,7 +343,7 @@ async def parse_container(tx: neo4j.Transaction, container: dict):
             query = build_add_edge_query('Container', target['ObjectType'], 'Contains', '{isacl: false}')
             await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
-async def parse_file(filename: str, driver: neo4j.GraphDatabase):
+async def parse_file(filename: str, driver: neo4j.AsyncDriver):
     """Parse a bloodhound file.
 
     Arguments:

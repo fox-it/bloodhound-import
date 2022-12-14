@@ -16,6 +16,6 @@ setup(
     packages=['bloodhound_import'],
     install_requires=['neo4j-driver', 'ijson'],
     entry_points={
-        'console_scripts': ['bloodhound-import=bloodhound_import:main']
+        'console_scripts': ['bloodhound-import=bloodhound_import:__main__']
     }
 )
