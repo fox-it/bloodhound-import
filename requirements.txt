@@ -6,7 +6,7 @@
 #
 
 -i https://pypi.org/simple
-asyncio==3.4.3
 ijson==3.1.4
 neo4j-driver==5.0.0a1
 pytz==2022.1
+clint>=0.5.1
