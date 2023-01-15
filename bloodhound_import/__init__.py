@@ -1,12 +1,11 @@
 import argparse
-import asyncio
 import logging
 from bloodhound_import import database
 from bloodhound_import.importer import parse_file, add_constraints
 from neo4j.exceptions import ClientError
 
 
-async def main():
+def main():
     """
         Main function
     """
@@ -32,24 +31,34 @@ async def main():
     else:
         logging.getLogger().setLevel(logging.INFO)
 
-    driver = database.init_driver(arguments.database, arguments.port, arguments.scheme, arguments.database_user, arguments.database_password)
+    
+    conn_data = dict(
+        ip=arguments.database,
+        port=arguments.port,
+        scheme=arguments.scheme,
+        user=arguments.database_user, 
+        password=arguments.database_password
+    )
 
+    driver = database.init_driver(**conn_data)
     try:
         try:
-            async with driver.session() as session:
+            with driver.session() as session:
                 logging.debug("Adding constraints to the neo4j database")
-                await session.write_transaction(add_constraints)
+                session.write_transaction(add_constraints)
         except ClientError:
             pass
-
-        logging.info("Parsing %s files", len(arguments.files))
-        for filename in arguments.files:
-            await parse_file(filename, driver)
-
-        logging.info("Done")
     finally:
-        await driver.close()
+        driver.close()
 
+    logging.info("Parsing %s files", len(arguments.files))
+    for filename in arguments.files:
+        parse_file(filename, **conn_data)
+
+    logging.info("Done")
+
+    exit(0)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
+
