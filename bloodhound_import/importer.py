@@ -45,7 +45,7 @@ async def process_ace_list(ace_list: list, objectid: str, objecttype: str, tx: n
 
 async def process_spntarget_list(spntarget_list: list, objectid: str, tx: neo4j.Transaction) -> None:
     for entry in spntarget_list:
-        query = build_add_edge_query('User', 'Computer', '', '{isacl: false, port: prop.port}')
+        query = build_add_edge_query('User', 'Computer', 'SPNTarget', '{isacl: false, port: prop.port}')
         props = dict(
             source=objectid,
             target=entry['ComputerSID'],
