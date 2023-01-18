@@ -184,7 +184,7 @@ async def parse_computer(tx: neo4j.Transaction, computer: dict):
 
     for session_type, source in session_types:
         if session_type in computer and computer[session_type]['Results']:
-            query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false, source:"%s"}' % source)
+            query = build_add_edge_query('User', 'Computer', 'HasSession', '{isacl:false, source:"%s"}' % source)
             for entry in computer[session_type]['Results']:
                 await tx.run(query, props=dict(source=entry['UserSID'], target=identifier))
 
