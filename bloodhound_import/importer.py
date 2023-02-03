@@ -20,11 +20,15 @@ SYNC_COUNT = 100
 
 
 def build_add_edge_query(
-    source_label: str, target_label: str, edge_type: str, edge_props: str
+    source_label: str,
+    target_label: str,
+    edge_type: str,
+    edge_props: str,
+    type: str = "objectid",
 ) -> str:
     """Build a standard edge insert query based on the given params"""
-    insert_query = "UNWIND $props AS prop MERGE (n:Base {{objectid: prop.source}}) SET n:{0} MERGE (m:Base {{objectid: prop.target}}) SET m:{1} MERGE (n)-[r:{2} {3}]->(m)"
-    return insert_query.format(source_label, target_label, edge_type, edge_props)
+    insert_query = "UNWIND $props AS prop MERGE (n:Base {{{0}: prop.source}}) ON MATCH SET n:{1} ON CREATE SET n:{1} MERGE (m:Base {{objectid: prop.target}}) ON MATCH SET m:{2} ON CREATE SET m:{2} MERGE (n)-[r:{3} {4}]->(m)"
+    return insert_query.format(type, source_label, target_label, edge_type, edge_props)
 
 
 async def process_ace_list(
@@ -202,11 +206,20 @@ async def parse_computer(tx: neo4j.Transaction, computer: dict):
         )
 
     if "AllowedToDelegate" in computer and computer["AllowedToDelegate"]:
-        query = build_add_edge_query("Computer", "Group", "MemberOf", "{isacl:false}")
         for entry in computer["AllowedToDelegate"]:
-            await tx.run(
-                query, props=dict(source=identifier, target=entry["ObjectIdentifier"])
-            )
+            if isinstance(entry, str):
+                query = build_add_edge_query(
+                    "Computer", "Group", "MemberOf", "{isacl:false}", "name"
+                )
+                await tx.run(query, props=dict(source=identifier, target=entry))
+            else:
+                query = build_add_edge_query(
+                    "Computer", "Group", "MemberOf", "{isacl:false}"
+                )
+                await tx.run(
+                    query,
+                    props=dict(source=identifier, target=entry["ObjectIdentifier"]),
+                )
 
     # (Property name, Edge name, Use "Results" format)
     options = [
@@ -222,16 +235,31 @@ async def parse_computer(tx: neo4j.Transaction, computer: dict):
         if option in computer:
             targets = computer[option]["Results"] if use_results else computer[option]
             for target in targets:
-                query = build_add_edge_query(
-                    target["ObjectType"],
-                    "Computer",
-                    edge_name,
-                    "{isacl:false, fromgpo: false}",
-                )
-                await tx.run(
-                    query,
-                    props=dict(source=target["ObjectIdentifier"], target=identifier),
-                )
+                if isinstance(target, str):
+                    query = build_add_edge_query(
+                        "Base",
+                        "Computer",
+                        edge_name,
+                        "{isacl:false, fromgpo: false}",
+                        "name",
+                    )
+                    await tx.run(
+                        query,
+                        props=dict(source=target, target=identifier),
+                    )
+                else:
+                    query = build_add_edge_query(
+                        target["ObjectType"],
+                        "Computer",
+                        edge_name,
+                        "{isacl:false, fromgpo: false}",
+                    )
+                    await tx.run(
+                        query,
+                        props=dict(
+                            source=target["ObjectIdentifier"], target=identifier
+                        ),
+                    )
 
     # (Session type, source)
     session_types = [
@@ -274,13 +302,20 @@ async def parse_user(tx: neo4j.Transaction, user: dict):
         )
 
     if "AllowedToDelegate" in user and user["AllowedToDelegate"]:
-        query = build_add_edge_query(
-            "User", "Computer", "AllowedToDelegate", "{isacl: false}"
-        )
         for entry in user["AllowedToDelegate"]:
-            await tx.run(
-                query, props=dict(source=identifier, target=entry["ObjectIdentifier"])
-            )
+            if isinstance(entry, str):
+                query = build_add_edge_query(
+                    "User", "Computer", "AllowedToDelegate", "{isacl: false}", "name"
+                )
+                await tx.run(query, props=dict(source=identifier, target=entry))
+            else:
+                query = build_add_edge_query(
+                    "User", "Computer", "AllowedToDelegate", "{isacl: false}"
+                )
+                await tx.run(
+                    query,
+                    props=dict(source=identifier, target=entry["ObjectIdentifier"]),
+                )
 
     # TODO add HasSIDHistory objects
 
