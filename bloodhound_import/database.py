@@ -20,52 +20,54 @@ def detect_db_config():
     OS dependent according to https://electronjs.org/docs/api/app#appgetpathname
     """
     system = platform.system()
-    if system == 'Windows':
+    if system == "Windows":
         try:
-            directory = os.environ['APPDATA']
+            directory = os.environ["APPDATA"]
         except KeyError:
             return (None, None)
-        config = os.path.join(directory, 'BloodHound', 'config.json')
+        config = os.path.join(directory, "BloodHound", "config.json")
         try:
-            with open(config, 'r') as configfile:
+            with open(config, "r") as configfile:
                 configdata = json.load(configfile)
         except IOError:
             return (None, None)
 
-    if system == 'Linux':
+    if system == "Linux":
         try:
-            directory = os.environ['XDG_CONFIG_HOME']
+            directory = os.environ["XDG_CONFIG_HOME"]
         except KeyError:
             try:
-                directory = os.path.join(os.environ['HOME'], '.config')
+                directory = os.path.join(os.environ["HOME"], ".config")
             except KeyError:
                 return (None, None)
-        config = os.path.join(directory, 'bloodhound', 'config.json')
+        config = os.path.join(directory, "bloodhound", "config.json")
         try:
-            with open(config, 'r') as configfile:
+            with open(config, "r") as configfile:
                 configdata = json.load(configfile)
         except IOError:
             return (None, None)
 
-    if system == 'Darwin':
+    if system == "Darwin":
         try:
-            directory = os.path.join(os.environ['HOME'], 'Library', 'Application Support')
+            directory = os.path.join(
+                os.environ["HOME"], "Library", "Application Support"
+            )
         except KeyError:
             return (None, None)
-        config = os.path.join(directory, 'bloodhound', 'config.json')
+        config = os.path.join(directory, "bloodhound", "config.json")
         try:
-            with open(config, 'r') as configfile:
+            with open(config, "r") as configfile:
                 configdata = json.load(configfile)
         except IOError:
             return (None, None)
 
     # If we are still here, we apparently found the config :)
     try:
-        username = configdata['databaseInfo']['user']
+        username = configdata["databaseInfo"]["user"]
     except KeyError:
-        username = 'neo4j'
+        username = "neo4j"
     try:
-        password = configdata['databaseInfo']['password']
+        password = configdata["databaseInfo"]["password"]
     except KeyError:
         password = None
     return username, password
