@@ -45,11 +45,11 @@ async def process_ace_list(ace_list: list, objectid: str, objecttype: str, tx: n
 
 async def process_spntarget_list(spntarget_list: list, objectid: str, tx: neo4j.Transaction) -> None:
     for entry in spntarget_list:
-        query = build_add_edge_query('User', 'Computer', '', '{isacl: false, port: prop.port}')
+        query = build_add_edge_query('User', 'Computer', 'WriteSPN', '{isacl: false, port: prop.port}')
         props = dict(
             source=objectid,
             target=entry['ComputerSID'],
-            port=entry['Port'],
+            port=entry['Port'], 
         )
         await tx.run(query, props=props)
 
@@ -115,7 +115,7 @@ async def parse_ou(tx: neo4j.Transaction, ou: dict):
                 for target in targets:
                     query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
                     for computer in affected_computers:
-                        await tx.run(query, props=dict(target=computer, source=target['ObjectIdentifier']))
+                        await tx.run(query, props=dict(source=computer['ObjectIdentifier'], target=target['ObjectIdentifier']))
 
 
 async def parse_gpo(tx: neo4j.Transaction, gpo: dict):
@@ -186,7 +186,7 @@ async def parse_computer(tx: neo4j.Transaction, computer: dict):
         if session_type in computer and computer[session_type]['Results']:
             query = build_add_edge_query('Computer', 'User', 'HasSession', '{isacl:false, source:"%s"}' % source)
             for entry in computer[session_type]['Results']:
-                await tx.run(query, props=dict(source=entry['UserSID'], target=identifier))
+                await tx.run(query, props=dict(target=entry['UserSID'], source=identifier))
 
     if 'Aces' in computer and computer['Aces'] is not None:
         await process_ace_list(computer['Aces'], identifier, "Computer", tx)
@@ -319,7 +319,7 @@ async def parse_domain(tx: neo4j.Transaction, domain: dict):
                 for target in targets:
                     query = build_add_edge_query(target['ObjectType'], 'Computer', edge_name, '{isacl: false, fromgpo: true}')
                     for computer in affected_computers:
-                        await tx.run(query, props=dict(target=computer, source=target['ObjectIdentifier']))
+                        await tx.run(query, props=dict(source=computer['ObjectIdentifier'], target=target['ObjectIdentifier']))
 
 async def parse_container(tx: neo4j.Transaction, container: dict):
     """Parse a Container object.
