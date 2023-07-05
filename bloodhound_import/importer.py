@@ -4,6 +4,9 @@
 """
 
 from dataclasses import dataclass
+from tempfile import NamedTemporaryFile
+from zipfile import ZipFile
+from os.path import basename
 import codecs
 import ijson
 import logging
@@ -343,14 +346,39 @@ async def parse_container(tx: neo4j.Transaction, container: dict):
             query = build_add_edge_query('Container', target['ObjectType'], 'Contains', '{isacl: false}')
             await tx.run(query, props=dict(source=identifier, target=target['ObjectIdentifier']))
 
+
+async def parse_zipfile(filename: str, driver: neo4j.Driver):
+    """Parse a bloodhound zip file.
+
+    Arguments:
+        filename {str} -- ZIP filename to parse.
+        driver {neo4j.GraphDatabase} -- driver to connect to neo4j.
+    """
+    with ZipFile(filename) as zip_file:
+       for file in zip_file.namelist():
+            if not file.endswith('.json'):
+                logging.info("File does not appear to be JSON, skipping: %s", file)
+                continue
+
+            with NamedTemporaryFile(suffix=basename(file)) as temp:
+                temp.write(zip_file.read(file))
+                temp.flush()
+                await parse_file(temp.name, driver)
+
+
 async def parse_file(filename: str, driver: neo4j.AsyncDriver):
     """Parse a bloodhound file.
 
     Arguments:
-        filename {str} -- filename to parse.
+        filename {str} -- JSON filename to parse.
         driver {neo4j.GraphDatabase} -- driver to connect to neo4j.
     """
     logging.info("Parsing bloodhound file: %s", filename)
+
+    if filename.endswith('.zip'):
+        logging.info("File appears to be a zip file, importing all containing JSON files..")
+        await parse_zipfile(filename, driver)
+        return
 
     with codecs.open(filename, 'r', encoding='utf-8-sig') as f:
         meta = ijson.items(f, 'meta')
